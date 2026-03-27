@@ -4,14 +4,14 @@ import numpy as np
 from scipy.fft import fft2, ifft2, fftshift, ifftshift
 import pyfftw.interfaces.scipy_fft as fft
 from scipy.ndimage import uniform_filter, generic_filter, gaussian_filter
-from scipy import stats
+# from scipy import stats
 from astropy.io import fits
 # from astropy.stats import sigma_clip
 from astropy.convolution import convolve, Gaussian2DKernel, Box2DKernel, interpolate_replace_nans
 import matplotlib.pyplot as plt
 import logging
 from dataclasses import dataclass
-from typing import Callable, Tuple, Dict
+from typing import Tuple
 import time
 
 
@@ -28,10 +28,17 @@ class NoiseReductionConfig:
     xlim: int = 35
     ylim: int = 200
 
+    bad_x_ranges = [
+        (0, 0),
+        (11, 14),
+        (32, 38),
+        (57, 58),
+    ]
+
     # Filtering
     kernel_size: float = 2.0  # 3→2
     hpf_ksize: Tuple[float, ...] = (2.0, 1.0)
-    hpf_siglim: float = 3.0
+    siglim: float = 3.0
 
     # Despike
     despike_sigma: float = 3.0  # 5→3
@@ -176,7 +183,7 @@ def nan_gaussian_filter2(image, sigma):
 
 
 # High-pass filter (Gaussian-based)
-def hpfilter(image, ksize=NoiseReductionConfig.kernel_size, siglim=NoiseReductionConfig.hpf_siglim):
+def hpfilter(image, config):
     # kernel size = 3→2
     # Create a working copy of the input image
     imw = image.astype(np.float32, copy=True)
@@ -184,7 +191,7 @@ def hpfilter(image, ksize=NoiseReductionConfig.kernel_size, siglim=NoiseReductio
     # Initial threshold and mask bright spots
     med = np.median(imw)
     sig = np.nanstd(imw - med)
-    mask = np.abs(imw - med) > siglim * sig
+    mask = np.abs(imw - med) > config.siglim * sig
     count = np.count_nonzero(mask)
     cnt_k = count
     # logger.info("High-pass filter: %d pixels masked.", count)
@@ -196,7 +203,7 @@ def hpfilter(image, ksize=NoiseReductionConfig.kernel_size, siglim=NoiseReductio
 
         diff = imw - ims
         sig = np.nanstd(diff)
-        mask = (np.abs(diff) > siglim * sig) & (~np.isnan(imw))
+        mask = (np.abs(diff) > config.siglim * sig) & (~np.isnan(imw))
 
         if not np.any(mask):
             break
@@ -210,8 +217,6 @@ def hpfilter(image, ksize=NoiseReductionConfig.kernel_size, siglim=NoiseReductio
 
     logger.info("\nHigh-pass filter: %d pixels masked in total.", cnt_k)
     
-    ## hpfilter 無視する場合
-#    ims = np.zeros_like(im)
 
     ims = ims if ims_prev is None else ims_prev
     imh = image - ims
@@ -222,7 +227,7 @@ def hpfilter(image, ksize=NoiseReductionConfig.kernel_size, siglim=NoiseReductio
 
 
 # High-pass filter (Gaussian-based)
-def hpfilter2(image, siglim=NoiseReductionConfig.hpf_siglim, ksize=NoiseReductionConfig.hpf_ksize):
+def hpfilter2(image, config):
     """
     Iterative Gaussian-based high-pass filter.
 
@@ -245,7 +250,7 @@ def hpfilter2(image, siglim=NoiseReductionConfig.hpf_siglim, ksize=NoiseReductio
     imw = image.astype(np.float32, copy=True)
 
     # Despike
-    spikes = despiker5(imw)
+    spikes = despiker5(imw, config)
     spikes_cnt = np.count_nonzero(spikes)
     if np.any(spikes):
         imw[spikes] = np.nan
@@ -254,7 +259,7 @@ def hpfilter2(image, siglim=NoiseReductionConfig.hpf_siglim, ksize=NoiseReductio
     # --- Sigma clipping ---
     med = np.median(imw)
     sig = np.std(imw[~np.isnan(imw)])
-    mask = np.abs(imw - med) > siglim * sig
+    mask = np.abs(imw - med) > config.siglim * sig
     # count = np.count_nonzero(mask)
     # logger.info("High-pass filter: %d pixels masked.", count)
     
@@ -266,13 +271,10 @@ def hpfilter2(image, siglim=NoiseReductionConfig.hpf_siglim, ksize=NoiseReductio
     ims = np.zeros_like(imw)
 
     # Iterative smoothing
-    for sigma in ksize:
+    for sigma in config.hpf_ksize:
         ims_iter = nan_gaussian_filter(imw, sigma=sigma)
         imw -= ims_iter  # progressively removes low-frequency components
         ims += ims_iter  # sum of removed smooth components
-
-    ## hpfilter 無視
-    # ims = np.zeros_like(im)
 
     imh = image - ims
     
@@ -287,7 +289,7 @@ def hpfilter2(image, siglim=NoiseReductionConfig.hpf_siglim, ksize=NoiseReductio
 
 # despike - Spike removal
 # A simple despiking function that removes spikes from an image.
-def despiker(image, sigma=NoiseReductionConfig.despike_sigma): # sigma 5→3
+def despiker(image, config): # sigma 5→3
     """
     A simple despiking function that removes spikes from an image.
 
@@ -311,7 +313,7 @@ def despiker(image, sigma=NoiseReductionConfig.despike_sigma): # sigma 5→3
         sgm = np.std(imw[mask])
 
         # replace spikes (outliers) with NaN
-        outliers = np.abs(imw[mask] - ave) > sigma * sgm
+        outliers = np.abs(imw[mask] - ave) > config.despike_sigma * sgm
 
         if not outliers.any():
             break
@@ -342,7 +344,7 @@ def despiker(image, sigma=NoiseReductionConfig.despike_sigma): # sigma 5→3
 
 # despike - Spike removal # Type 5
 # A simple despiking function that removes spikes from an image.
-def despiker5(image, sigma=NoiseReductionConfig.despike_sigma): # sigma 5→3
+def despiker5(image, config): # sigma 5→3
     """
     A simple despiking function that removes spikes from an image.
 
@@ -364,7 +366,7 @@ def despiker5(image, sigma=NoiseReductionConfig.despike_sigma): # sigma 5→3
     # spikes = np.zeros(imw.shape, dtype=np.int8)
 
     # Convolution
-    imc = nan_gaussian_filter(imw, sigma=sigma)
+    imc = nan_gaussian_filter(imw, sigma=config.despike_sigma)
 
     # Only mask pixels that are significantly brighter than their surroundings.
     # Compute statistics (ignore NaNs)
@@ -376,7 +378,7 @@ def despiker5(image, sigma=NoiseReductionConfig.despike_sigma): # sigma 5→3
     # Detect positive spikes
     # detect only positive pixels
     # Create spike map
-    spikes = ((imc - ave) > (sigma * sgm)).astype(np.uint8)
+    spikes = ((imc - ave) > (config.despike_sigma * sgm)).astype(np.uint8)
 
     # For debugging
     # save_fits('spikes_imw.fits', imw)
@@ -507,14 +509,8 @@ def field_peri_noise_reduction(image, config: NoiseReductionConfig):
     # 3. Hard-coded noise stripes
     # --------------------------------------------------    
     # Set the mask flag for the specific noisy columns
-    bad_x_ranges = [
-        (0, 0),
-        (11, 14),
-        (32, 38),
-        (57, 58),
-    ]
 
-    for x0, x1 in bad_x_ranges:
+    for x0, x1 in config.bad_x_ranges:
         msk[:, x0:x1 + 1] = True
 
     # Replace pixels where msk is True with NaN
@@ -835,10 +831,10 @@ def tanzaku_noise_reduction(image, side, basename, config, io):
     # ------------------------------
     # High-pass filtering
     if not io.no_hpf:
-        # im_high, im_smth = hpfilter(im_target)
-        im_target, im_smth = hpfilter2(im_target)
+        # im_high, im_smth = hpfilter(im_target, config)
+        im_target, im_smth = hpfilter2(im_target, config)
         if verbose:
-            save_fits(os.path.join(outdir, basename + '_hpf' + lr + '.fits'), [im_target, im_smth])
+            save_fits(os.path.join(io.outdir, basename + '_hpf' + lr + '.fits'), [im_target, im_smth])
             # save_fits(os.path.join(io.outdir, basename + '_hpf' + lr + '.fits'), np.hstack([im_target, im_smth]))
     else:
         im_smth = np.zeros_like(im_target)
@@ -848,9 +844,9 @@ def tanzaku_noise_reduction(image, side, basename, config, io):
     # ------------------------------
     # Despike
     if not io.no_despike:
-        im_target, im_spk = despiker(im_target)
+        im_target, im_spk = despiker(im_target, config)
         if verbose:
-            save_fits(os.path.join(outdir, basename + '_dsp' + lr + '.fits'), [im_target, im_spk])
+            save_fits(os.path.join(io.outdir, basename + '_dsp' + lr + '.fits'), [im_target, im_spk])
             # save_fits(os.path.join(io.outdir, basename + '_dsp' + lr + '.fits'), np.hstack([im_target, im_spk]))
     else: 
         im_spk = np.zeros_like(im_target)
