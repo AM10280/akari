@@ -4,11 +4,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 from astropy.io import fits
 from astropy.stats import sigma_clip
-import logging
-import time
+# import logging
+# import time
 
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+# logger = logging.getLogger(__name__)
+# logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 
 # FITS I/O Utilities
