@@ -4,7 +4,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 from astropy.io import fits
 from astropy.stats import sigma_clip
-# import time
+import logging
+import time
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 
 # FITS I/O Utilities
@@ -12,7 +16,7 @@ from astropy.stats import sigma_clip
 def read_fits_list(fits_list_path):
     """Read FITS file paths from a text file."""
     with open(fits_list_path, 'r') as f:
-        return f.read().splitlines()
+        return list(map(lambda x: x.strip() + '.fits', f.readlines()))
 
 
 def read_fits(file):
@@ -129,6 +133,9 @@ def get_band_ranges(band):
 def de_stripes(file, pattern_image, outdir='./destripes'):
     """Apply stripe correction to a single FITS file."""
     """Remove stripes and save corrected FITS images."""
+    
+    # start_time = time.process_time()
+
     data, header = read_fits(file)
     # Ensure consistent dtype (avoid repeated casting later)
     data = data.astype(np.float32, copy=False)
@@ -142,10 +149,16 @@ def de_stripes(file, pattern_image, outdir='./destripes'):
     filename = os.path.basename(file).replace(".fits", "")
     write_fits(filename, corrected_data, header, outdir)
 
+    # logger.info("経過時間 1枚： %s", time.process_time() - start_time)
+    return
+
 
 def de_stripes_outer(fits_files, season, band, sigma=3, maxiters=5):
     """Compute the pattern image for all FITS files."""
     # Load all FITS images into a 3D stack (n_images, height, width)
+
+    # start_time = time.process_time()
+
     data_stack = load_fits_stack(fits_files)
 
     # Apply sigma clipping to exclude outliers across the stack
@@ -186,6 +199,8 @@ def de_stripes_outer(fits_files, season, band, sigma=3, maxiters=5):
     # pattern_image = np.broadcast_to(profile_diff, (mean_image.shape[0], profile_diff.size)).copy()
     # save_fits(pattern_image, 'pattern_image')  # for debugging
     
+    # logger.info("経過時間 補正用画像： %s", time.process_time() - start_time)
+
     return pattern_image
 
 
@@ -194,8 +209,7 @@ def de_stripes_list(fits_list_path, band):
     fits_files = read_fits_list(fits_list_path)
     pattern_image = de_stripes_outer(fits_files, fits_list_path, band)
     for file in fits_files:
-        file_path = file + '.fits'
-        de_stripes(file_path, pattern_image)
+        de_stripes(file, pattern_image)
 
 
 # Entry Point
