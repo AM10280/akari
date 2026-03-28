@@ -194,7 +194,8 @@ def de_stripes_list(fits_list_path, band):
     fits_files = read_fits_list(fits_list_path)
     pattern_image = de_stripes_outer(fits_files, fits_list_path, band)
     for file in fits_files:
-        de_stripes(file, pattern_image)
+        file_path = file + '.fits'
+        de_stripes(file_path, pattern_image)
 
 
 # Entry Point
