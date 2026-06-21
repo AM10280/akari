@@ -129,12 +129,12 @@ def plot_profile(profile_x, season, outdir='./profile_ave'):
     filename = os.path.basename(season).replace('.txt', '')
 
     plt.figure(figsize=(12, 6))
-    # plt.plot(profile_x, label='1st season', color='C0', alpha=0.7)
     plt.plot(profile_x, label=filename, color='C0', alpha=0.7)
     # plt.plot(median_profile, label='Median Profile', color='r', alpha=0.7)
     # plt.ylim(-16.2, 7)
     # plt.ylim(0, 225)
-    plt.ylim(0, 250)
+    # plt.ylim(0, 250)
+    plt.ylim(0, 350)
     # plt.ylim(-34, 11) # average, each 2 rows
     plt.xlabel('Pixel (X-direction)')
     plt.ylabel('Power')
@@ -155,12 +155,11 @@ def plot_profile_diff(profile_x, season, outdir='./profile_ave_diff'):
     filename = os.path.basename(season).replace('.txt', '')
 
     plt.figure(figsize=(12, 6))
-    # plt.plot(profile_x, label='1st season', color='C0', alpha=0.7)
     plt.plot(profile_x, label=filename, color='C0', alpha=0.7)
     # plt.plot(median_profile, label='Median Profile', color='r', alpha=0.7)
     # plt.ylim(-16.2, 7)
     # plt.ylim(0, 225)
-    plt.ylim(-34, 11) # average, each 2 rows
+    plt.ylim(-34, 12) # average, each 2 rows
     plt.xlabel('Pixel (X-direction)')
     plt.ylabel('Power')
     plt.title('Average Profiles')
