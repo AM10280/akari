@@ -185,7 +185,7 @@ def gauss_fill(image, sigma=5.):
 
 
 
-def field_peri_noise_reduction(image, mode=2, xlim=35, ylim=270):
+def field_peri_noise_reduction(image, mode=2, xlim=35, ylim=200):
     """
     mode 
         0: y >= ylim
@@ -300,7 +300,7 @@ def field_peri_noise_reduction(image, mode=2, xlim=35, ylim=270):
 
 
 # def field_peri_noise_reduction_rev5(image, mode=2, xlim=35, ylim=270):
-def field_peri_noise_reduction_rev5(image, mode=2, xlim=35, ylim=270, seed=None):
+def field_peri_noise_reduction_rev5(image, mode=2, xlim=35, ylim=200, seed=None):
     """
     mode 
         0: y >= ylim
@@ -539,7 +539,7 @@ def field_peri_noise_reduction_rev5(image, mode=2, xlim=35, ylim=270, seed=None)
 
 
 
-def field_peri_noise_reduction_rev7(image, mode=2, xlim=35, ylim=270, seed=None):
+def field_peri_noise_reduction_rev7(image, mode=0, xlim=35, ylim=200, seed=None):
     """
     mode 
         0: y >= ylim
@@ -551,6 +551,7 @@ def field_peri_noise_reduction_rev7(image, mode=2, xlim=35, ylim=270, seed=None)
 
     if seed is not None:
         rng = np.random.default_rng(seed)
+        # np.random.seed(seed)
     else:
         rng = np.random.default_rng()
 
@@ -559,7 +560,9 @@ def field_peri_noise_reduction_rev7(image, mode=2, xlim=35, ylim=270, seed=None)
         raise ValueError("Input image must be a 2D numpy array.")
 
     # image = np.asarray(image, dtype=float)
-    ny, nx = image.shape  # Dimensions of the image  # note reversed order
+    dat = image.astype(float).copy()
+    # ny, nx = image.shape  # Dimensions of the image  # note reversed order
+    ny, nx = dat.shape
 
     # Initialize the working data and mask for noise detection in y < ylim
     # Copy the first 270 rows of the image
@@ -568,7 +571,9 @@ def field_peri_noise_reduction_rev7(image, mode=2, xlim=35, ylim=270, seed=None)
     # ny, nx = dat.shape
 
 
+    # --------------------------------------------------
     # 1. Define protected area (pct)
+    # --------------------------------------------------
     # Protect specific regions based on mode
     # pct = np.zeros((ny, nx), dtype=int)
     # pct = np.zeros((ny, nx), dtype=np.uint8)
@@ -576,12 +581,12 @@ def field_peri_noise_reduction_rev7(image, mode=2, xlim=35, ylim=270, seed=None)
 
     if mode == 0:
         print("Mode = 0: Protecting y >= ylim.")
-        dat[ylim:, :] = image[ylim:, :]
+        # dat[ylim:, :] = image[ylim:, :]
         # pct[ylim:ny, :] = 1
         pct[ylim:, :] = True
     elif mode == 1:
         print("Mode = 1: Protecting rectangular region.")
-        dat[ylim:, xlim:] = image[ylim:, xlim:]
+        # dat[ylim:, xlim:] = image[ylim:, xlim:]
         # pct[ylim:ny, xlim:nx] = 1
         pct[ylim:, xlim:] = True
     elif mode == 2:
@@ -590,10 +595,14 @@ def field_peri_noise_reduction_rev7(image, mode=2, xlim=35, ylim=270, seed=None)
         ey = float(ny - ylim) # semi-minor axis
         # Create a grid of coordinates
         # y, x = np.ogrid[:ny, :nx]
-        y, x = np.meshgrid(np.arange(ny), np.arange(nx), indexing='ij')
+        # y, x = np.meshgrid(np.arange(ny), np.arange(nx), indexing='ij')
         # distance = ((x - (nx - 1)) / ex) ** 2 + ((y - (ny - 1)) / ey) ** 2
         # distance = ((x - nx) / ex) ** 2 + ((y - ny) / ey) ** 2
-        rr = ((x - (nx - 1)) / ex) ** 2 + ((y - (ny - 1)) / ey) ** 2
+        # rr = ((x - (nx - 1)) / ex) ** 2 + ((y - (ny - 1)) / ey) ** 2
+        y = (ny - 1) - np.arange(ny)
+        x = (nx - 1) - np.arange(nx)
+        xx, yy = np.meshgrid(x, y)
+        rr = (xx / ex) ** 2 + (yy / ey) ** 2
         # Create the elliptical mask (1 inside the ellipse, 0 outside)
         ## elliptical_mask = distance <= 1
         # ellipse_idx = np.where(distance <= 1)
@@ -605,14 +614,20 @@ def field_peri_noise_reduction_rev7(image, mode=2, xlim=35, ylim=270, seed=None)
     else:
         raise ValueError("Mode must be 0, 1, or 2.")
 
+    pidx = np.where(pct == 1)
+    # pidx = np.where(pct <= 1)
+
+    # --------------------------------------------------
+    # 2. Prepare mask and threshold for untouched pixels
+    # --------------------------------------------------
     # Protected pixel indices (IDL-style linear logic avoided)
-    dat = image.copy()
-    msk = np.zeros_like(dat, dtype=int)
-    # msk = np.zeros_like(dat, dtype=bool)
+    # dat = image.copy()
+    # msk = np.zeros_like(dat, dtype=int)
+    msk = np.zeros_like(dat, dtype=bool)
 
 
-    dat[pct] = np.nan
-    msk[pct] = 1
+    # dat[pct] = np.nan
+    # msk[pct] = 1
     # msk[pct] = True
 
     # pidx = np.where(pct == 1)
@@ -620,24 +635,40 @@ def field_peri_noise_reduction_rev7(image, mode=2, xlim=35, ylim=270, seed=None)
 
     # 2. Pre-mask known noise regions
 
+    # STDDEV of protected area
+    if pidx[0].size > 0:
+        sgm = np.nanstd(dat[pidx])
+    else:
+        sgm = np.nanstd(dat)
+
     # set the threshold for untouch pixels.
-    sgm = np.nanstd(dat[pct])
+    # sgm = np.nanstd(dat[pidx])
     pmax = 3.0 * sgm
 
-    nidx = np.abs(dat) <= pmax
+    # pixels small enough to be untouched
+    nidx = np.where(np.abs(dat) <= pmax)
+    # nidx = np.abs(dat) <= pmax
     # ncnt = np.count_nonzero(nidx) # the number of True
     # print(ave, sgm, pmax, len(nidx))
+    # print(sgm, pmax, len(nidx))
 
     # Initialize a mask
     # msk = np.zeros(dat.shape, dtype=int)
-    msk = np.zeros_like(dat, dtype=int)
+    # msk = np.zeros_like(dat, dtype=int)
     
     # msk = np.zeros_like(dat, dtype=bool)
     
     # Set the mask flag for the protected area
-    msk[pct] = 1
+    # msk[pct] = 1
     # msk[pct] = True
+
+    # protect region
+    if pidx[0].size > 0:
+        msk[pidx] = True
     
+    # --------------------------------------------------
+    # 3. Hard-coded noise stripes
+    # --------------------------------------------------    
     # Set the mask flag for the specific noisy columns
     bad_x_ranges = [
         (0, 0),
@@ -647,15 +678,20 @@ def field_peri_noise_reduction_rev7(image, mode=2, xlim=35, ylim=270, seed=None)
     ]
 
     for x0, x1 in bad_x_ranges:
-        dat[:, x0:x1 + 1] = np.nan
-        msk[:, x0:x1 + 1] = 1
-        # msk[:, x0:x1 + 1] = True
+        # dat[:, x0:x1 + 1] = np.nan
+        # msk[:, x0:x1 + 1] = 1
+        msk[:, x0:x1 + 1] = True
 
     # msk == True → NaN
-    # dat[msk] = np.nan
+    # idx = np.where(msk == 1)
+    # dat[idx] = np.nan
+    dat[msk] = np.nan
 
 
 
+    # --------------------------------------------------
+    # 4. Iterative sigma-clipping
+    # --------------------------------------------------
     # 3. Iterative 3-sigma clipping
     while True:
         # Calculate mean and standard deviation excluding NaN values
@@ -669,6 +705,8 @@ def field_peri_noise_reduction_rev7(image, mode=2, xlim=35, ylim=270, seed=None)
         # if not np.any(cond):
         #     break
 
+        # if cond[0].size == 0:
+        #     break
 
         if not np.isfinite(sgm) or sgm == 0:
             break
@@ -685,8 +723,8 @@ def field_peri_noise_reduction_rev7(image, mode=2, xlim=35, ylim=270, seed=None)
         # dat[iy, ix] = np.nan
         # msk[iy, ix] = 1
         dat[cond] = np.nan
-        msk[cond] = 1
-        # msk[cond] = True
+        # msk[cond] = 1
+        msk[cond] = True
 
     # number of NaNs
     nan_n = np.count_nonzero(np.isnan(dat))
@@ -702,17 +740,17 @@ def field_peri_noise_reduction_rev7(image, mode=2, xlim=35, ylim=270, seed=None)
     # healthy = ~masked
 
 
-    masked = msk
-    healthy = ~msk & np.isfinite(dat)
+    # masked = msk
+    # healthy = ~msk & np.isfinite(dat)
 
-    if not np.any(masked) or not np.any(healthy):
-        return image.copy()
+    # if not np.any(masked) or not np.any(healthy):
+    #     return image.copy()
 
 
     # If there are no noisy or normal pixels, exit
 #    if len(noise_mask) == 0 or len(normal_mask) == 0:
 #        print("No noise detected or insufficient normal pixels.")
-#       return
+#        return
         
     if nan_n == 0:
         return
@@ -723,6 +761,9 @@ def field_peri_noise_reduction_rev7(image, mode=2, xlim=35, ylim=270, seed=None)
     print(f'FieldPeriNoiseReduction: {nan_n} pixels are processed.')
 
 
+    # --------------------------------------------------
+    # 5. Y-dependent statistics
+    # --------------------------------------------------
     # 5. Y-dependent mean and stddev
     # Y-dependent statistics from healthy pixels
     # (row-by-row: collapse X direction) # axis=1
@@ -734,19 +775,48 @@ def field_peri_noise_reduction_rev7(image, mode=2, xlim=35, ylim=270, seed=None)
     # dat = image.copy()
     # print(dat.shape)
 
-    ave = np.nanmean(dat, axis=1)
-    sgm = np.nanstd(dat, axis=1)
+    ave_y = np.nanmean(dat, axis=1)
+    sgm_y = np.nanstd(dat, axis=1)
+    # print("The number of NaNs (ave_y) :", np.count_nonzero(np.isnan(ave_y)))
+    # print("The number of NaNs (sgm_y) :", np.count_nonzero(np.isnan(sgm_y)))
+    # ave = np.nanmean(dat, axis=1)
+    # sgm = np.nanstd(dat, axis=1)
     # print(np.nanmean(ave))
     # print(np.nanmean(sgm))
 
+    # indices of masked pixels
+    msk_int = msk.astype(int)  # bool → int
+    # fill_idx = msk_int
+    fill_idx = np.where(msk_int == 1)
+
+    # --------------------------------------------------
+    # 6. Fill noise with Gaussian random values
+    # --------------------------------------------------
     # 6. Fill masked pixels with Gaussian noise
+
+    # print("msk: ", len(msk))
+    # print("msk_int: ", len(msk_int))
+    # print("fill_idx: ", fill_idx.shape)
+    # x_indices = fill_idx[0]
+    y_indices = fill_idx[1]
+    # x_indices, y_indices = fill_idx
+    # print("x_indices: ", x_indices.shape)
+    # print("y_indices: ", y_indices.shape)
+    noise = rng.standard_normal(len(y_indices))
+    # noise = rng.normal(size=(len(y_indices)))
+
+    dat[fill_idx] = (
+        ave_y[y_indices] +
+        noise * sgm_y[y_indices]
+    )
 
     # rows = idx // nx  # Flattened index / nx = row number
     # dat_flat[idx] = ave[rows] + np.random.randn(cnt) * sgm[rows]
-    ys, xs = np.where(masked)
+    # ys, xs = np.where(masked)
 
-    noise = rng.standard_normal(len(ys))
-    dat[ys, xs] = ave[ys] + noise * sgm[ys]
+    # noise = rng.standard_normal(len(ys))
+    # dat[ys, xs] = ave[ys] + noise * sgm[ys]
+    # dat[ys, xs] = 0
 
 #    if seed is not None:
 #        np.random.seed(seed)
@@ -766,14 +836,24 @@ def field_peri_noise_reduction_rev7(image, mode=2, xlim=35, ylim=270, seed=None)
     # Restore protected and untouched pixels
     # overwrite protected area by the original data
     # dat[pidx] = image[pidx]
-    dat[pct] = image[pct]
+    # dat[pct] = image[pct]
     # overwrite untouched area by the original data  # Data smaller than pmax should be restored.
-    dat[nidx] = image[nidx]
+    # dat[nidx] = image[nidx]
+
+
+    if pidx[0].size > 0:
+        dat[pidx] = image[pidx]
+
+    if nidx[0].size > 0:
+        dat[nidx] = image[nidx]
 
     # write back to the data
     image = dat
+    # print("The number of NaNs :", np.count_nonzero(np.isnan(image)))
 
-    return image, msk
+    # msk_int = msk.astype(int)  # bool → int
+
+    return image, msk_int
 
 
 
@@ -868,6 +948,7 @@ def hpfilter2(image, siglim=3.0, ksize=(2.0, 1.0)):
     # imw[mask] = np.nan
 
     ksize=(2.0, 1.0)
+    # ksize_list = [2.0, 1.0]
 
     # Accumulator for smooth component
     ima = np.zeros_like(imw)
@@ -912,7 +993,7 @@ def hpfilter2(image, siglim=3.0, ksize=(2.0, 1.0)):
 
 # despike - Spike removal
 # A simple despiking function that removes spikes from an image.
-def despiker(image, sigma=3): # sigma 5→3
+def despiker(image, sigma=5): # sigma 5→3
     """
     A simple despiking function that removes spikes from an image.
 
@@ -1028,6 +1109,8 @@ def tanzaku_noise_reduction(image, leftright, basename=None, outdir='./', verbos
     """Perform noise reduction on a tanzaku image."""
     start_time = time.process_time()
 
+    # preserve=None
+
     if basename is None:
         verbose = False
     if not os.path.exists(outdir):
@@ -1043,8 +1126,10 @@ def tanzaku_noise_reduction(image, leftright, basename=None, outdir='./', verbos
         xran = np.array([0, 58]) + 6
     elif leftright == "RIGHT":
         xran = np.array([0, 58]) + 69
+    else:
+        raise ValueError("leftright must be LEFT or RIGHT")        
     yran = np.array([0, 300]) + 3
-    im_target = image[yran[0]:yran[1], xran[0]:xran[1]]
+    im_target = image[yran[0]:yran[1], xran[0]:xran[1]].copy()
     
     # High-pass filtering
     if not no_hpf:
@@ -1097,9 +1182,11 @@ def tanzaku_noise_reduction(image, leftright, basename=None, outdir='./', verbos
     im4[h:2*h, 1:w+1] = np.flip(im_target, axis=0)
     im4[1:h+1, w:2*w] = np.flip(im_target, axis=1)
     im4[h:2*h, w:2*w] = np.flip(np.flip(im_target, axis=0), axis=1)
-    
+
+    # print("shape of im4:", im4.shape)
+    # print("finite of im4:", np.isfinite(im4).sum())
+
     folded_image = im4
-    
 
 
     if verbose:
@@ -1136,12 +1223,17 @@ def tanzaku_noise_reduction(image, leftright, basename=None, outdir='./', verbos
 
     # Extract the left top region in Fourier space (original image's size)
     # fft_image_o = fft_image[:h, :w]
-    fft_image_o = fft_image[0:h+1, 0:w+1]
+    fft_image_o = fft_image[0:h+1, 0:w+1]  # ← Add one more to overlap the central axis section. 軸合わせのため1つ多め
     # save_fits(os.path.join(outdir, basename + '_fft_o' + lr + '.fits'), np.abs(fft_image_o))
     # Apply a noise reduction filter     
     real_fft = np.real(fft_image_o)
     if verbose:
         save_fits(os.path.join(outdir, basename + '_fft_oreal' + lr + '.fits'), np.abs(real_fft))
+
+
+    # print("finite of real_fft:", np.isfinite(real_fft).sum())
+    # print("min/max:", np.nanmin(real_fft), np.nanmax(real_fft))
+
 
     '''    
     if preserve is None or len(preserve) != 2:
@@ -1154,13 +1246,17 @@ def tanzaku_noise_reduction(image, leftright, basename=None, outdir='./', verbos
     # fft_masked, mask_area = field_peri_noise_reduction(real_fft)
     # fft_masked, mask_area = field_peri_noise_reduction_rev5(real_fft)
     # fft_masked, mask_area = field_peri_noise_reduction_rev5(real_fft, mode=2, xlim=preserve[0], ylim==preserve[1])
-    fft_masked, mask_area = field_peri_noise_reduction_rev7(real_fft)
+    fft_masked, mask_area = field_peri_noise_reduction_rev7(real_fft, mode=2)
 
 
     if verbose:
         save_fits(os.path.join(outdir, basename + '_fftm' + lr + '.fits'), np.abs(fft_masked))
         save_fits(os.path.join(outdir, basename + '_msk' + lr + '.fits'), np.abs(mask_area))
     
+    # print("finite of real_fft:", np.isfinite(fft_masked).sum())
+    # print("min/max:", np.nanmin(fft_masked), np.nanmax(fft_masked))
+
+
     '''
     # Refold the masked Fourier image (with 1-pixel overlap)
     # Horizontally mirror (with 1-pixel overlap)
@@ -1172,18 +1268,27 @@ def tanzaku_noise_reduction(image, leftright, basename=None, outdir='./', verbos
     
     # Mirror updated far to fa
     fa4 = np.zeros((h * 2, w * 2))
+    # fa4 = np.zeros(real_fft)
 #    fa4 = np.real(folded_image)
     # fa4 = np.zeros(folded_image)
     
+    # print("shape of fft_masked:", fft_masked.shape)
     # fa4[0:h, 0] = fft_masked[0:h, 0]
     # fa4[0, 0:w] = fft_masked[0, 0:w]
     # fa4[h:2*h, 0] = np.flip(fft_masked[0:h, 0], axis=0)
     # fa4[0, w:2*w] = np.flip(fft_masked[0, 0:w], axis=0)
 
-    fa4[1:h+1, 1:w+1]   = fft_masked[1:h+1, 1:w+1]
-    fa4[h:2*h, 1:w+1] = np.flip(fft_masked[1:h+1, 1:w+1], axis=0)
-    fa4[1:h+1, w:2*w] = np.flip(fft_masked[1:h+1, 1:w+1], axis=1)
+    fa4[0:h+1, 0:w+1] = fft_masked
+    fa4[h:2*h, 0:w+1] = np.flip(fft_masked[1:h+1, :], axis=0)
+    fa4[0:h+1, w:2*w] = np.flip(fft_masked[:, 1:w+1], axis=1)
     fa4[h:2*h, w:2*w] = np.flip(np.flip(fft_masked[1:h+1, 1:w+1], axis=0), axis=1)
+
+    
+    # fa4[1:h+1, 1:w+1]   = fft_masked[1:h+1, 1:w+1]
+    # fa4[h:2*h, 1:w+1] = np.flip(fft_masked[1:h+1, 1:w+1], axis=0)
+    # fa4[1:h+1, w:2*w] = np.flip(fft_masked[1:h+1, 1:w+1], axis=1)
+    # fa4[h:2*h, w:2*w] = np.flip(np.flip(fft_masked[1:h+1, 1:w+1], axis=0), axis=1)
+
 
     folded_fft_masked = fa4
     
@@ -1204,6 +1309,15 @@ def tanzaku_noise_reduction(image, leftright, basename=None, outdir='./', verbos
     reconstructed_image = ifft2(ifft_shifted)
     print(f'Total imaginary component (inverse FFT) is {np.sum(np.abs(np.imag(reconstructed_image)))}')
     reconstructed_image = np.real(reconstructed_image)
+
+    print("DEBUG reconstructed_image")
+    print(" shape:", reconstructed_image.shape)
+    print("finite after ifft (reconstructed_image) :", np.isfinite(reconstructed_image).sum())
+    print("min/max:", np.nanmin(reconstructed_image), np.nanmax(reconstructed_image))
+    print(" min/max:", 
+        np.nanmin(reconstructed_image) if np.isfinite(reconstructed_image).any() else "NaN",
+        np.nanmax(reconstructed_image) if np.isfinite(reconstructed_image).any() else "NaN")
+
     im_difference = reconstructed_image - folded_image
 
     if verbose:
@@ -1292,7 +1406,8 @@ def tanzakurmnoise2d(file, leftonly=False, rightonly=False, outdir='./', verbose
     if raw:
 #    if 'raw' in locals() and raw:
         im0[:, 0] = 0
-        imd = im0 - np.roll(im0, shift=-1, axis=1)
+        # imd = im0 - np.roll(im0, shift=-1, axis=1)
+        imd = im0 - np.roll(im0, shift=1, axis=1)
         imd[:, 0:2] = 0
     else:
         imd = im0.copy()
@@ -1394,7 +1509,7 @@ def rmnoise_list(fits_list_path):
     for f in input_files:
         file = f + '.fits'
         # tanzakurmnoise2d(file, leftonly=False, rightonly=False, outdir='./output', verbose=True, nodespike=False, nohpf=False, raw=False)
-        tanzakurmnoise2d(file, leftonly=False, rightonly=False, outdir='./output', verbose=False, nodespike=False, nohpf=False, raw=False)
+        tanzakurmnoise2d(file, leftonly=False, rightonly=False, outdir='./after_rmnoise', verbose=True, nodespike=False, nohpf=False, raw=False)
 
 
 
