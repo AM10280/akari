@@ -1,7 +1,7 @@
 import sys
 import os
 import numpy as np
-# import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt
 from astropy.io import fits
 from astropy.stats import sigma_clip
 from astropy.convolution import convolve, Gaussian2DKernel, interpolate_replace_nans
@@ -68,7 +68,7 @@ def gauss_fill(image, sigma=5.):
     return image
 
 
-def despiker(image, sigma=5.0, threshold=5.0, max_iterations=10):
+def despiker(image, sigma=5.0, threshold=3.0, max_iterations=10):
     """Enhanced despiking with iterative replacement and Gaussian smoothing."""
     imw = np.copy(image)
     iterations = 0
@@ -161,8 +161,8 @@ def de_stripes_outer(fits_files):
     data_stack = np.array(data_list)
 
     # despike each data array and create a stacked image
-    despiked_data = [despiker(data) for data in data_list]
-    despiked_data_stack = np.array(despiked_data)
+    ## despiked_data = [despiker(data) for data in data_list]
+    ## despiked_data_stack = np.array(despiked_data)
     # stacked_image = np.mean(despiked_data_stack, axis=0)
     # stacked_image = np.median(despiked_data_stack, axis=0)  # ← discretized by 24
     
@@ -172,33 +172,56 @@ def de_stripes_outer(fits_files):
     # Apply sigma clipping along the image stack (axis=0: across images at the same location)
     # Apply sigma-clipping along the first axis (images) for each (x, y)
     # clipped_stack = sigma_clip(data_stack, sigma=3, maxiters=5, axis=0)
-    clipped_stack = sigma_clip(despiked_data_stack, sigma=3, maxiters=5, axis=0)
-    print('clipped_stack: ', clipped_stack)
+    ## clipped_stack = sigma_clip(despiked_data_stack, sigma=3, maxiters=5, axis=0)
+    clipped_stack = sigma_clip(data_stack, sigma=3, maxiters=5, axis=0)
+    # print('clipped_stack: ', clipped_stack)
     # clipped_stack = sigma_clip(despiked_data_stack, sigma=3, maxiters=5, axis=0, masked=False)
     
     # Replace outliers with NaN for further processing
     sigma_clipped_stack = np.where(clipped_stack.mask, np.nan, despiked_data_stack)
     # sigma_clipped_stack = clipped_stack.fill(np.nan)
     # sigma_clipped_stack = clipped_stack.fill(np.nanmean(clipped_stack))
-    print('sigma_clipped_stack: ', sigma_clipped_stack)
+    # print('sigma_clipped_stack: ', sigma_clipped_stack)
 
     # Compute the mean image after outlier exclusion
     # Compute the mean of unclipped (valid) values
     # mean_image = np.mean(clipped_stack, axis=0)
     mean_image = np.nanmean(sigma_clipped_stack, axis=0)
 
+    # original code sigma_clipping
     # mean_image = sigma_clipping2(despiked_data_stack, sigma=3.0, threshold=5.0, max_iterations=5)
 
     save_fits(mean_image, 'mean_image')
 
     # Create a profile image for pattern removal
-    mean_image_cropped = mean_image[:-3, :]  # Exclude the last 3 rows
-    save_fits(mean_image_cropped, 'mean_image_cropped')
+    mean_image_cropped = mean_image[:-2, :]  # Exclude the last 3 rows
+    # save_fits(mean_image_cropped, 'mean_image_cropped')
 
     # Create a (mean or median) profile along the X-direction
     profile_x = np.mean(mean_image_cropped, axis=0)
 
     
+    file_path='A'
+    plt.figure(figsize=(12, 6))
+    plt.plot(profile_x, label='Average Profile', color='b', alpha=0.7)
+    # plt.plot(median_profile, label='Median Profile', color='r', alpha=0.7)
+    # plt.ylim(-16.2, 7)
+    plt.ylim(0, 225)
+    plt.xlabel('Pixel (X-direction)')
+    plt.ylabel('Profile Value')
+    plt.title('Average Profiles')
+    # plt.title('Median Profiles of FITS Image (Y-Integrated)')
+    # plt.legend()
+    plt.grid()
+    outdir="./profile_ave"
+    os.makedirs(outdir, exist_ok=True)
+    filename = os.path.basename(file_path).rstrip('.fits')
+    plot_filename = os.path.join('profile_ave', f'{filename}.png')
+    plt.savefig(plot_filename, format='png', dpi=150, bbox_inches='tight', pad_inches=0.1)
+    #plt.show()
+    plt.close()
+
+
     """
     # Normalize and prepare the pattern image
     x_range1, x_range2 = (6, 63), (69, 126)
