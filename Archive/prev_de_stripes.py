@@ -3,8 +3,10 @@ import os
 import numpy as np
 # import matplotlib.pyplot as plt
 from astropy.io import fits
-from astropy.convolution import convolve, Gaussian2DKernel
+from astropy.convolution import convolve, Gaussian2DKernel, interpolate_replace_nans
 # from multiprocessing import Pool
+import time
+
 
 def read_fits_list(fits_list_path):
     """Read list of FITS files from a text file."""
@@ -39,7 +41,7 @@ def despike(data, threshold=5.0):
 
 
 # gauss_fill - Fill NaN values with Gaussian-weighted mean of surroundings
-def gauss_fill0(image, sigma=5.):
+def gauss_fill(image, sigma=5.):
     # Find the indices of NaN values in the image
     mask = np.where(np.isnan(image))
     rows, cols = image.shape
@@ -57,7 +59,7 @@ def gauss_fill0(image, sigma=5.):
 
 
 
-def gauss_fill(image, sigma=5.0):
+def gauss_fill3(image, sigma=5.0):
     """Fill NaN values using my own Gaussian filter.
      gauss_fill - Fill NaN values with Gaussian-weighted mean of surroundings"""
     mask = np.isnan(image)
@@ -94,33 +96,43 @@ def gauss_fill2(image, sigma=5.0):
     return image
 
 
-def gauss_fill_astropy(image, sigma=5.0):
-    """Efficiently fill NaN values using a Gaussian filter with astropy."""
-    mask = np.isnan(image)
-    filled_image = np.where(mask, 0, image)  # Set NaN values to 0 for initial convolution
-
-    # Create a Gaussian kernel with a specified sigma
-    gaussian_kernel = Gaussian2DKernel(sigma)
-    
-    # Convolve the image with the Gaussian kernel
-    filled_image = convolve(filled_image, gaussian_kernel, normalize_kernel=True)
-    weights = convolve(~mask.astype(float), gaussian_kernel, normalize_kernel=True)
-    
-    # Normalize by the weights and fill NaN areas
-    filled_image[mask] = filled_image[mask] / weights[mask]
-    return filled_image
 
 
-def gauss_fill_scipy(image, sigma=5.0):
-    """Efficiently fill NaN values using a Gaussian filter."""
-    from scipy.ndimage import gaussian_filter
-    mask = np.isnan(image)
-    filled_image = image.copy()
-    filled_image[mask] = 0  # Set NaN to 0 for filling
-    filled_image = gaussian_filter(filled_image, sigma=sigma)
-    weights = gaussian_filter(~mask, sigma=sigma)
-    filled_image[mask] = filled_image[mask] / weights[mask]
-    return filled_image
+def replace_nans(image, stddev):
+    # Replace NaN values with interpolated values
+        stddev = 1.0
+        max_iterations = 10
+        iteration = 0
+
+        while iteration < max_iterations:
+            kernel = Gaussian2DKernel(stddev, stddev)
+            # astropy_conv = convolve(image, kernel)
+            image = interpolate_replace_nans(image, kernel)
+
+            if np.isnan(image).sum() == 0:
+                break
+            stddev += 1
+            iteration += 1
+            image = image
+        if iteration < max_iterations:
+            print(f"Interpolated by a Gaussian 2D kernel with the stddev of {stddev}")
+        return image
+
+
+
+def despiker(image, sigma=5.0, threshold=5.0, max_iterations=10):
+    """Enhanced despiking with iterative replacement and Gaussian smoothing."""
+    imw = np.copy(image)
+    iterations = 0
+    while iterations < max_iterations:
+        ave = np.nanmean(imw)
+        sgm = np.nanstd(imw)
+        mask = np.abs(imw - ave) > threshold * sgm
+        if not np.any(mask):
+            break
+        imw[mask] = np.nan
+        iterations += 1
+    return gauss_fill(imw, sigma)
 
 
 def despiker3(image, sigma=5):
@@ -133,6 +145,8 @@ def despiker3(image, sigma=5):
         if not np.any(mask):
             break
         imw[mask] = np.nan
+
+#    return replace_nans(imw, sigma)
     return gauss_fill(imw, sigma)
 
 
@@ -159,7 +173,8 @@ def rm_stripes(file, pattern_image, outdir='./rmstripes'):
     corrected_data = data - pattern_image
     write_fits(filename, corrected_data, header, outdir)
 
-def rm_stripes_outer(fits_files):
+
+def create_pattern_image(fits_files):
     """Compute the pattern image for all FITS files."""
     # Load all FITS images into a list of data arrays
     data_list = load_fits_images(fits_files)
@@ -167,25 +182,33 @@ def rm_stripes_outer(fits_files):
 
     # Create a stacked image by despiking each data array  
     # despiked_data = [despike(data) for data in data_list]
-    despiked_data = [despiker3(data) for data in data_list]
-    stacked_image = np.mean(despiked_data, axis=0)
-    # Create a median profile along the X-direction
-    profile_x = np.median(stacked_image, axis=0)
+    despiked_data = [despiker(data) for data in data_list]
+    despiked_data_stack = np.array(despiked_data)
+    stacked_image = np.mean(despiked_data_stack, axis=0)
+    # stacked_image = np.median(despiked_data_stack, axis=0)  # ← discretized by 24
+    
+    stacked_image_cropped = stacked_image[:-3, :]  # Exclude the last 3 rows
+
+    # Create a (mean or median) profile along the X-direction
+    # profile_x = np.mean(stacked_image_cropped, axis=0)
+    profile_x = np.median(stacked_image_cropped, axis=0)
 
     # Compute the difference in specified X ranges and normalize
     x_range1, x_range2 = (6, 63), (69, 126)
-    mean_val = np.mean(profile_x)
+    mean_val1 = np.mean(profile_x[x_range1[0]:x_range1[1]+1])
+    mean_val2 = np.mean(profile_x[x_range2[0]:x_range2[1]+1])
     profile_diff = np.zeros_like(profile_x)
-    profile_diff[x_range1[0]:x_range1[1]+1] = profile_x[x_range1[0]:x_range1[1]+1] - mean_val
-    profile_diff[x_range2[0]:x_range2[1]+1] = profile_x[x_range2[0]:x_range2[1]+1] - mean_val
+    profile_diff[x_range1[0]:x_range1[1]+1] = profile_x[x_range1[0]:x_range1[1]+1] - mean_val1
+    profile_diff[x_range2[0]:x_range2[1]+1] = profile_x[x_range2[0]:x_range2[1]+1] - mean_val2
 
     # Create a 2D pattern image based on the 1D profile difference
     return np.tile(profile_diff, (stacked_image.shape[0], 1))
 
-def rm_stripes_list(fits_list_path):
+def rm_stripes_list(fits_list_path, for_pattern):
     """Main function to process all files."""
+    pattern_files = read_fits_list(for_pattern)
+    pattern_image = create_pattern_image(pattern_files)
     fits_files = read_fits_list(fits_list_path)
-    pattern_image = rm_stripes_outer(fits_files)
     for file in fits_files:
         rm_stripes(file, pattern_image)
     # with Pool() as pool:
@@ -193,4 +216,5 @@ def rm_stripes_list(fits_list_path):
 
 if __name__ == "__main__":
     fits_list_path = sys.argv[1]
-    rm_stripes_list(fits_list_path)
+    for_pattern = sys.argv[2]
+    rm_stripes_list(fits_list_path, for_pattern)
