@@ -92,6 +92,37 @@ def sigma_clipping2(images, sigma=5.0, threshold=5.0, max_iterations=10):
     return mean_clipped_image
 
 
+def save_profile(profile_x, season, outdir='./profile_ave'):
+    os.makedirs(outdir, exist_ok=True)
+    filename = os.path.basename(season).replace('.txt', '')
+
+    profile_filename = os.path.join('profile_ave', f'{filename}.txt')
+    np.savetxt(filename, profile_x)
+
+
+def plot_profile(profile_x, season, outdir='./profile_ave'):
+    os.makedirs(outdir, exist_ok=True)
+    filename = os.path.basename(season).replace('.txt', '')
+
+    plt.figure(figsize=(12, 6))
+    plt.plot(profile_x, label='Average Profile', color='b', alpha=0.7)
+    # plt.plot(median_profile, label='Median Profile', color='r', alpha=0.7)
+    # plt.ylim(-16.2, 7)
+    # plt.ylim(0, 225)
+    plt.xlabel('Pixel (X-direction)')
+    plt.ylabel('Profile Value')
+    plt.title('Average Profiles')
+    # plt.title('Median Profiles of FITS Image (Y-Integrated)')
+    # plt.legend()
+    plt.grid()
+
+    plot_filename = os.path.join('profile_ave', f'{filename}.png')
+    plt.savefig(plot_filename, format='png', dpi=150, bbox_inches='tight', pad_inches=0.1)
+    #plt.show()
+    plt.close()
+
+
+
 
 def de_stripes(file, pattern_image, outdir='./destripes'):
     """Remove stripes and save corrected FITS images."""
@@ -109,7 +140,7 @@ def de_stripes(file, pattern_image, outdir='./destripes'):
     write_fits(filename, corrected_data, header, outdir)
 
 
-def de_stripes_outer(fits_files):
+def de_stripes_outer(fits_files, season):
     """Compute the pattern image for all FITS files."""
     # Load all FITS images into a list of data arrays
     # Load all FITS images into a 3D stack (n_images, height, width)
@@ -158,6 +189,9 @@ def de_stripes_outer(fits_files):
     # Create a (mean or median) profile along the X-direction
     profile_x = np.mean(mean_image_cropped, axis=0)
 
+    save_profile(profile_x, season)
+    plot_profile(profile_x, season)
+
 
     """
     # Normalize and prepare the pattern image
@@ -205,7 +239,7 @@ def de_stripes_list(fits_list_path, pattern_list_path):
     """Main function to process all files."""
     fits_files = read_fits_list(fits_list_path)
     pattern_fits_files = read_fits_list(pattern_list_path)
-    pattern_image = de_stripes_outer(pattern_fits_files)
+    pattern_image = de_stripes_outer(pattern_fits_files, pattern_list_path)
     for file in fits_files:
         de_stripes(file, pattern_image)
 
