@@ -1516,8 +1516,8 @@ def rmnoise_list(fits_list_path):
     input_files = read_fits_list(fits_list_path)
     for f in input_files:
         file = f + '.fits'
-        # tanzakurmnoise2d(file, leftonly=False, rightonly=False, outdir='./output', verbose=True, nodespike=False, nohpf=False, raw=False)
-        tanzakurmnoise2d(file, leftonly=False, rightonly=False, outdir='./after_rmnoise', verbose=True, nodespike=False, nohpf=False, raw=False)
+        # tanzakurmnoise2d(file, leftonly=False, rightonly=False, outdir='./after_rmnoise', verbose=True, nodespike=False, nohpf=False, raw=False)
+        tanzakurmnoise2d(file, leftonly=False, rightonly=False, outdir='./after_rmnoise', verbose=False, nodespike=False, nohpf=False, raw=False)
 
 
 
