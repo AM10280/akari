@@ -220,6 +220,7 @@ def rm_noise_6data(yf,msk_range, xlim1, xlim2):
 
 #パワースペクトルにマスクをかけてスムージング
 def rm_noise_PS(gx,yf,rolling_yf,msk_range,snumber):
+#def rm_noise_PS(yf,msk_range):
     for y in range(0,304):
         if msk_range[y] == 1:
             nm = 0
@@ -239,21 +240,21 @@ def rm_noise_PS(gx,yf,rolling_yf,msk_range,snumber):
     for y in range(0,303):
         yf[607-y] = yf[y]
     
-    plt.figure(figsize=(8,5))
-    plt.xlim(-0.01,0.5)
-    plt.ylim(-0.01,0.1)
-    plt.plot(gx, np.abs(yf), label='power spectrum')
-    plt.plot(gx,rolling_yf,label='moving average', alpha=0.7) 
-    plt.title('power spectrum and moving average')
-    plt.title('mask range')
-    plt.xlabel('frequency')
-    plt.ylabel('power')
-    plt.plot(gx,msk_range, alpha=0.7)
-    #plt.legend()
-    rnp_filename = os.path.join('rnp/' + filename + snumber + '.png')
-    plt.savefig(rnp_filename, format='png', dpi=300, bbox_inches='tight', pad_inches=0.1)
-    #plt.show()
-    plt.close()
+#    plt.figure(figsize=(8,5))
+#    plt.xlim(-0.01,0.5)
+#    plt.ylim(-0.01,0.1)
+#    plt.plot(gx, np.abs(yf), label='power spectrum')
+#    plt.plot(gx,rolling_yf,label='moving average', alpha=0.7) 
+#    plt.title('power spectrum and moving average')
+#    plt.title('mask range')
+#    plt.xlabel('frequency')
+#    plt.ylabel('power')
+#    plt.plot(gx,msk_range, alpha=0.7)
+#    #plt.legend()
+#    rnp_filename = os.path.join('rnp/' + filename + snumber + '.png')
+#    plt.savefig(rnp_filename, format='png', dpi=300, bbox_inches='tight', pad_inches=0.1)
+#    #plt.show()
+#    plt.close()
 
     return(yf)
 
@@ -444,6 +445,12 @@ def delta_PS_move_ave(gx,yf,rolling_yf,base_std, ext):
     for y in range(0,608):
         if fity_selfFFT[y] >= 5*base_std:
             msk_range[y] = 1
+            if y >= 1:
+                msk_range[y-1] = 1
+            if y <= 606:
+                msk_range[y+1] = 1
+
+
 
     plt.figure(figsize=(8,5))
     plt.xlim(-0.01,0.5)
@@ -451,7 +458,7 @@ def delta_PS_move_ave(gx,yf,rolling_yf,base_std, ext):
     plt.plot(gx, np.abs(yf), label='power spectrum')
     plt.plot(gx,rolling_yf,label='moving average', alpha=0.7) 
     plt.title('power spectrum and moving average')
-    plt.title('noise range')
+    plt.title('mask range')
     plt.xlabel('frequency')
     plt.ylabel('power')
     plt.plot(gx,msk_range, alpha=0.5)
