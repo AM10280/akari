@@ -427,7 +427,7 @@ def yf_plot(yf, x1,x2, mode, ext):
 #    plt.show()
     return()
 
-
+ 
 ####  main() ####
 
 def rmnoise(filename):
@@ -570,7 +570,7 @@ def rmnoise(filename):
     
     yf_plot(yf, x1,x2, "abs", "_a")     # x1,x2で指定した範囲を1列ずつFFTして表示
     
-    # invers FFTをかける
+    # inverse FFTをかける
     ycut = yf_ifft(yf, 1,yf.nx)
     
     
