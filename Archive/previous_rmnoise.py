@@ -14,6 +14,49 @@ import time
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
+
+
+class Ycut:
+    def __init__(self, data):
+        self.data = data
+        self.ny, self.nx = data.shape
+        self.gx = np.arange(self.nx)
+        self.ave = None
+
+    def compute_average(self):
+        self.ave = np.mean(self.data, axis=0)
+        return self.ave
+
+    def normalize(self):
+        self.data /= np.max(np.abs(self.data))
+
+    def copy(self):
+        return Ycut(self.data.copy())
+
+
+class TanzakuContext:
+    def __init__(self, image):
+        self.original = image
+        self.working = image.copy()
+        self.header = header
+        self.ny, self.nx = image.shape
+        self.mask = np.zeros_like(image, dtype=bool)
+
+        self.im_high = None
+        self.im_smth = None
+        self.im_dsp = None
+        self.im_spk = None
+
+        self.fft = None
+        self.fft_masked = None
+
+        self.reconstructed = None
+
+
+
+
+
+
 def read_fits(file):
     """Reads a FITS file and returns the image data and header."""
     with fits.open(file) as hdul:
@@ -791,12 +834,11 @@ def tanzaku_noise_reduction(image, leftright, basename=None, outdir='./', verbos
     # Refold the masked Fourier image (with 1-pixel overlap)
     # Mirror updated far to fa
     fa4 = np.zeros((h * 2, w * 2))
-    # fa4 = np.zeros(folded_image)
     
     fa4[0:h+1, 0:w+1] = fft_masked
-    fa4[h:2*h, 0:w+1] = np.flip(fft_masked[1:h+1, :], axis=0)  # Vertically mirror
-    fa4[0:h+1, w:2*w] = np.flip(fft_masked[:, 1:w+1], axis=1)  # Horizontally mirror (with 1-pixel overlap)
-    fa4[h:2*h, w:2*w] = np.flip(np.flip(fft_masked[1:h+1, 1:w+1], axis=0), axis=1)
+    fa4[h:2*h, 0:w+1] = fft_masked[h+1:0:-1, :]  # Vertically mirror
+    fa4[0:h+1, w:2*w] = fft_masked[:, w:0:-1]  # Horizontally mirror (with 1-pixel overlap)
+    fa4[h:2*h, w:2*w] = fft_masked[h+1:0:-1, w:0:-1]
 
     folded_fft_masked = fa4
     
@@ -806,7 +848,6 @@ def tanzaku_noise_reduction(image, leftright, basename=None, outdir='./', verbos
     
     # Set imaginary to zero
     folded_fft_masked = folded_fft_masked + 1j * np.zeros_like(folded_fft_masked)
-    # folded_fft_masked = np.complex128(folded_fft_masked)
 
     # Perform inverse Fourier Transform
     # Inverse shift the zero frequency back
