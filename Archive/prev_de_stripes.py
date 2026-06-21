@@ -239,8 +239,8 @@ def de_stripes_outer(fits_files, season):
     # Create a (mean or median) profile along the X-direction
     profile_x = np.mean(mean_image_cropped, axis=0)
 
-    save_profile(profile_x, season)
-    plot_profile(profile_x, season, outdir='./profile_ave')
+    # save_profile(profile_x, season)
+    # plot_profile(profile_x, season, outdir='./profile_ave')
 
 
     
@@ -252,8 +252,8 @@ def de_stripes_outer(fits_files, season):
     profile_diff[x_range1[0]:x_range1[1] + 1] = profile_x[x_range1[0]:x_range1[1] + 1] - mean_val1
     profile_diff[x_range2[0]:x_range2[1] + 1] = profile_x[x_range2[0]:x_range2[1] + 1] - mean_val2
 
-    save_profile_diff(profile_diff, season)
-    plot_profile_diff(profile_diff, season, outdir='./profile_ave_diff')
+    # save_profile_diff(profile_diff, season)
+    # plot_profile_diff(profile_diff, season, outdir='./profile_ave_diff')
 
     # Create a 2D pattern image based on the 1D profile difference
     # pattern_image_d = np.tile(profile_diff, (mean_image.shape[0], 1))
