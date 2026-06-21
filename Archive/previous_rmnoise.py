@@ -107,11 +107,11 @@ def return_star(ycut,yescape):
                 ycut.data[x][y] = yescape.data[x][y]
     return(ycut)
 
-#ノイズを除去_左(6data)
-def rm_noise_left_6data(yf,msk_range):
-    for x in range(0,64):
+#ノイズを除去_左右両用(6data)
+def rm_noise_6data(yf,msk_range, xlim1, xlim2):
+    for x in range(xlim1,xlim2):
         for y in range(0,yf.ny):
-            if msk_range[2*y] == 0.1:
+            if msk_range[2*y] == 1:
                 nm = 0
                 n = 0
                 i = 0
@@ -122,75 +122,113 @@ def rm_noise_left_6data(yf,msk_range):
                         i += 1
                     elif msk_range[2*y+1+i] != 0:
                         i += 1
-                ave = nm/n/2
+                ave = nm/n/2.0
                 yf.data[x][y] = ave
-                yf.data[x][y-1] = ave
-                yf.data[x][y+1] = ave
-            if msk_range[2*y+1] == 0.1:
-                nm = 0
-                n = 0
-                i = 0
-                while n < 3:
-                    if msk_range[2*y+2+i] == 0:
-                        nm += yf.data[x][y-3+n]+yf.data[x][y+2+i]
-                        n += 1
-                        i += 1
-                    elif msk_range[2*y+2+i] != 0:
-                        i += 1
-                ave = nm/n/2
-                yf.data[x][y] = ave
-                yf.data[x][y+1] = ave
-                yf.data[x][y-1] = ave
-                yf.data[x][y+2] = ave
+#                yf.data[x][y-1] = ave
+#                yf.data[x][y+1] = ave
+#            if msk_range[2*y+1] == 1:
+#                nm = 0
+#                n = 0
+#                i = 0
+#                while n < 3:
+#                    if msk_range[2*y+2+i] == 0:
+#                        nm += yf.data[x][y-3+n]+yf.data[x][y+2+i]
+#                        n += 1
+#                        i += 1
+#                    elif msk_range[2*y+2+i] != 0:
+#                        i += 1
+#                ave = nm/n/2.0
+#                yf.data[x][y] = ave
+#                yf.data[x][y+1] = ave
+#                yf.data[x][y-1] = ave
+#                yf.data[x][y+2] = ave
     return()
 
-#ノイズを除去_右(6data)
-def rm_noise_right_6data(yf,msk_range):
-    for x in range(64,yf.nx):
-        for y in range(0,yf.ny):
-            if msk_range[2*y] == 0.1:
-                nm = 0
-                n = 0
-                i = 0
-                while n < 3:
-                    if msk_range[2*y+1+i] == 0:
-                        nm += yf.data[x][y-3+n]+yf.data[x][y+1+i]
-                        n += 1
-                        i += 1
-                    elif msk_range[2*y+1+i] != 0:
-                        i += 1
-                ave = nm/n/2
-                yf.data[x][y] = ave
-                yf.data[x][y-1] = ave
-                yf.data[x][y+1] = ave
-            if msk_range[2*y+1] == 0.1:
-                nm = 0
-                n = 0
-                i = 0
-                while n < 3:
-                    if msk_range[2*y+2+i] == 0:
-                        nm += yf.data[x][y-3+n]+yf.data[x][y+2+i]
-                        n += 1
-                        i += 1
-                    elif msk_range[2*y+2+i] != 0:
-                        i += 1
-                ave = nm/n/2
-                yf.data[x][y] = ave
-                yf.data[x][y+1] = ave
-                yf.data[x][y-1] = ave
-                yf.data[x][y+2] = ave
-    return()
+####ノイズを除去_左(6data)
+###def rm_noise_left_6data(yf,msk_range):
+###    for x in range(0,64):
+###        for y in range(0,yf.ny):
+###            if msk_range[2*y] == 0.1:
+###                nm = 0
+###                n = 0
+###                i = 0
+###                while n < 3:
+###                    if msk_range[2*y+1+i] == 0:
+###                        nm += yf.data[x][y-3+n]+yf.data[x][y+1+i]
+###                        n += 1
+###                        i += 1
+###                    elif msk_range[2*y+1+i] != 0:
+###                        i += 1
+###                ave = nm/n/2
+###                yf.data[x][y] = ave
+###                yf.data[x][y-1] = ave
+###                yf.data[x][y+1] = ave
+###            if msk_range[2*y+1] == 0.1:
+###                nm = 0
+###                n = 0
+###                i = 0
+###                while n < 3:
+###                    if msk_range[2*y+2+i] == 0:
+###                        nm += yf.data[x][y-3+n]+yf.data[x][y+2+i]
+###                        n += 1
+###                        i += 1
+###                    elif msk_range[2*y+2+i] != 0:
+###                        i += 1
+###                ave = nm/n/2
+###                yf.data[x][y] = ave
+###                yf.data[x][y+1] = ave
+###                yf.data[x][y-1] = ave
+###                yf.data[x][y+2] = ave
+###    return()
+###
+####ノイズを除去_右(6data)
+###def rm_noise_right_6data(yf,msk_range):
+###    for x in range(64,yf.nx):
+###        for y in range(0,yf.ny):
+###            if msk_range[2*y] == 0.1:
+###                nm = 0
+###                n = 0
+###                i = 0
+###                while n < 3:
+###                    if msk_range[2*y+1+i] == 0:
+###                        nm += yf.data[x][y-3+n]+yf.data[x][y+1+i]
+###                        n += 1
+###                        i += 1
+###                    elif msk_range[2*y+1+i] != 0:
+###                        i += 1
+###                ave = nm/n/2
+###                yf.data[x][y] = ave
+###                yf.data[x][y-1] = ave
+###                yf.data[x][y+1] = ave
+###            if msk_range[2*y+1] == 0.1:
+###                nm = 0
+###                n = 0
+###                i = 0
+###                while n < 3:
+###                    if msk_range[2*y+2+i] == 0:
+###                        nm += yf.data[x][y-3+n]+yf.data[x][y+2+i]
+###                        n += 1
+###                        i += 1
+###                    elif msk_range[2*y+2+i] != 0:
+###                        i += 1
+###                ave = nm/n/2
+###                yf.data[x][y] = ave
+###                yf.data[x][y+1] = ave
+###                yf.data[x][y-1] = ave
+###                yf.data[x][y+2] = ave
+###    return()
 
 #パワースペクトルにマスクをかけてスムージング
 def rm_noise_PS(yf,msk_range):
     for y in range(0,304):
-        if msk_range[y] == 0.1:
+        if msk_range[y] == 1:
             nm = 0
             n = 0
             i = 0
             while n < 3:
                 if msk_range[y+i] == 0:
-                    nm += np.abs(yf[y-3+n])+np.abs(yf[y+1+i])
+#                    nm += np.abs(yf[y-3+n])+np.abs(yf[y+1+i])
+                    nm += (yf[y-3+n])+(yf[y+1+i])
                     n += 1
                     i += 1
                 elif msk_range[y+i] != 0:
@@ -294,7 +332,7 @@ def fitsdsp_diff(data1,data2, vmin,vmax):
 
 
 # 自己相関関数をFFT
-def test_fft_compare(ss):
+def test_fft_compare(ss, ext):
     # 両側FFT
     d1 = np.zeros(304*2)
     for y in range(0,304):
@@ -314,17 +352,22 @@ def test_fft_compare(ss):
     #plt.plot(gx1*2-1,d1)
     #plt.show()
     
+    plt.figure(figsize=(8,5))
     plt.subplot(212)
     plt.ylim(-0.01,0.1)
     plt.xlim(-0.01,0.5)
     plt.title('power spectrum')
     plt.xlabel('frequency')
     plt.ylabel('power')
-    plt.plot(gx1, np.abs(yf1))
+    plt.plot(gx1, np.abs(yf1), color = 'C0' if ext == '_L' or ext == '_R' else 'C1')
     
-    plot_filename = os.path.join('plot/' + filename + '.png')
-    plt.savefig(plot_filename, pad_inches=1)
-    #plt.show()
+    plot_filename = os.path.join('plot/' + filename + ext + '.png')
+#    plot_filename = os.path.join('/Users/yamamura/Desktop/to_weka/IRCMap_doublestar/Qnoise/u_20230818/test/plot/' + filename + ext + '.png')
+#    print(plot_filename)
+#    plt.savefig(plot_filename, bbox_inches='tight', pad_inches=0.1)
+    plt.savefig(plot_filename, format='png', dpi=300, bbox_inches='tight', pad_inches=0.1)
+#    plt.show()
+    plt.close()
     
     return(yf1,gx1)
 
@@ -351,7 +394,7 @@ def delta_m_ave_self_fft(gx,yf,side):
 
     for y in range(0,608):
         if fity_selfFFT[y] >= 3*std:
-            msk_range[y] = 0.1
+            msk_range[y] = 1
     
     #plt.xlim(-0.01,0.5)
     #plt.ylim(-0.01,0.1)
@@ -364,10 +407,12 @@ def delta_m_ave_self_fft(gx,yf,side):
     #plt.plot(gx,msk_range)
     #plt.legend()
     #plt.show()
+    #plt.close()
+
     return(msk_range,std,rolling_yf)
 
 #パワースペクトルと移動平均からマスクの範囲を決定
-def delta_PS_move_ave(gx,yf,rolling_yf,base_std):
+def delta_PS_move_ave(gx,yf,rolling_yf,base_std, ext):
     delta_rangel = 0.09
     fity_selfFFT_std = np.zeros(304-math.floor(304*delta_rangel*2))
     fity_selfFFT = np.zeros(608)
@@ -379,24 +424,30 @@ def delta_PS_move_ave(gx,yf,rolling_yf,base_std):
 
     for y in range(0,608):
         if fity_selfFFT[y] >= 5*base_std:
-            msk_range[y] = 0.1
+            msk_range[y] = 1
 
-    #plt.xlim(-0.01,0.5)
-    #plt.ylim(-0.01,0.1)
-    #plt.plot(gx, np.abs(yf), label='power spectrum')
-    #plt.plot(gx,rolling_yf,label='moving average') 
-    #plt.title('power spectrum and moving average')
-    #plt.title('noise range')
-    #plt.xlabel('frequency')
-    #plt.ylabel('power')
-    #plt.plot(gx,msk_range)
+    plt.figure(figsize=(8,5))
+    plt.xlim(-0.01,0.5)
+    plt.ylim(-0.01,0.1)
+    plt.plot(gx, np.abs(yf), label='power spectrum')
+    plt.plot(gx,rolling_yf,label='moving average', alpha=0.7) 
+    plt.title('power spectrum and moving average')
+    plt.title('noise range')
+    plt.xlabel('frequency')
+    plt.ylabel('power')
+    plt.plot(gx,msk_range, alpha=0.5)
     #plt.legend()
+
+    noise_filename = os.path.join('noise/' + filename + ext + '.png')
+#    plt.savefig(noise_filename, bbox_inches='tight', pad_inches=0.1)
+    plt.savefig(noise_filename, format='png', dpi=300, bbox_inches='tight', pad_inches=0.1)
     #plt.show()
+    plt.close()
             
     return(msk_range)
 
 # フーリエ変換の結果をプロットする
-def yf_plot(yf, x1,x2, mode):
+def yf_plot(yf, x1,x2, mode, ext):
     plt.xlim(1e-5,1.0-1e-5)
     #plt.ylim(1,1e6)
     if   mode == "abs":
@@ -434,10 +485,12 @@ def yf_plot(yf, x1,x2, mode):
             plt.plot(yf.gx*2, yf.ave.imag + 40*x2)
     else:
         print('No')
+    #プロット グラフ表示
     #plt.title('FFT of raw data(masked)')
     plt.xlabel('frequency')
     plt.ylabel('power')
-    plt.show()
+
+    #plt.show()
     return()
 
 
@@ -459,6 +512,10 @@ data0 = copy.deepcopy(data)
 # FITSデータを加工する
 # (data[y][x]→data[x][y]変換, 開始からoffy回分のsamplingを除く)
 ycut = data_flip_xy(data, offy)
+
+#天体の情報を抜く（改良版）
+ycut,yescape = escape_star(ycut,data, 0,63, 0,304)       # pixel 値 400 以上
+
 
 # FITSデータ(2次元配列)を1次元配列にする
 ldata = np.zeros(58*ycut.ny)
@@ -497,7 +554,7 @@ lss = sm.tsa.stattools.acf(llist, nlags=lag_max)
 
 # (テスト) FFT2種類の方法の比較
 #test_fft_compare(ss)
-yfl1,gxl1 = test_fft_compare(lss)
+yfl1,gxl1 = test_fft_compare(lss, "_L")
 N_yfl = len(yfl1)
 yfl = np.zeros(N_yfl)
 for y in range(0,608):
@@ -521,7 +578,7 @@ rlist = pd.Series(rdata2)
 rlist.index = pd.Series(np.ndarray(58*ycut.ny*2))
 rss = sm.tsa.stattools.acf(rlist, nlags=lag_max)
 
-yfr1,gxr1 = test_fft_compare(rss)
+yfr1,gxr1 = test_fft_compare(rss, "_R")
 N_yfr = len(yfr1)
 yfr = np.zeros(N_yfr)
 for y in range(0,608):
@@ -541,11 +598,11 @@ yfr3 = rm_noise_PS(yfr2,msk_ranger2)
 msk_ranger3,stdr3,rolling_yfr3 = delta_m_ave_self_fft(gxr1,yfr3,'right')
 
 #moving averageと実際の関数の差からマスク位置を決定(正確)
-mask_rangel = delta_PS_move_ave(gxl1,yfl,rolling_yfl3,stdl3)
-mask_ranger = delta_PS_move_ave(gxr1,yfr,rolling_yfr3,stdr3)
+mask_rangel = delta_PS_move_ave(gxl1,yfl,rolling_yfl3,stdl3,'_L')
+mask_ranger = delta_PS_move_ave(gxr1,yfr,rolling_yfr3,stdr3,'_R')
 
-#天体の情報を抜く
-ycut,yescape = escape_star(ycut,data, 0,63, 0,304)
+#天体の情報を抜く（オリジナル）
+#ycut,yescape = escape_star(ycut,data, 0,63, 0,304)       # pixel 値 400 以上
 
 #FFTをかける
 yf = ycut_fft(ycut, 1,ycut.nx)
@@ -553,21 +610,72 @@ yf = ycut_fft(ycut, 1,ycut.nx)
 #yf_plot(yf, x1,x2, "abs")
 
 #自動で決定した範囲のノイズを除去
-rm_noise_left_6data(yf,mask_rangel)
-rm_noise_right_6data(yf,mask_ranger)
+#rm_noise_left_6data(yf,mask_rangel)
+#rm_noise_right_6data(yf,mask_ranger)
+rm_noise_6data(yf,mask_rangel,0,64)
+rm_noise_6data(yf,mask_ranger,64,yf.nx)
 
-yf_plot(yf, x1,x2, "abs")
+yf_plot(yf, x1,x2, "abs", "_a")     # x1,x2で指定した範囲を1列ずつFFTして表示
 
 # invers FFTをかける
 ycut = yf_ifft(yf, 1,yf.nx)
 
-#天体の情報を元に戻す
+
+#天体の情報を元に戻す（オリジナル）
+#ycut = return_star(ycut,yescape)
+
+
+
+# 処理後のデータのFFTプロット
+# FITSデータ(2次元配列)を1次元配列にする
+ldata = np.zeros(58*ycut.ny)
+for x in range(6, 64):
+    for y in range(0, ycut.ny):
+        ldata[(x-6)*ycut.ny+y] = ycut.data[x][y].real
+        
+rdata = np.zeros(58*ycut.ny)
+for x in range(69, ycut.nx):
+    for y in range(0, ycut.ny):
+        rdata[(x-69)*ycut.ny+y] = ycut.data[x][y].real
+
+#列の合間にダミーデータを入れる
+lave = statistics.mean(ldata)
+dummyl = 0
+ldata2 = [lave]*58*ycut.ny*2
+for x in range(6, 64):
+    for y in range(0, ycut.ny):
+        ldata2[(x-6)*ycut.ny+dummyl*ycut.ny+y] = ycut.data[x][y].real
+    dummyl += 1
+
+rave = statistics.mean(rdata)
+dummyr = 0
+rdata2 = [rave]*58*ycut.ny*2
+for x in range(69, ycut.nx):
+    for y in range(0, ycut.ny):
+        rdata2[(x-69)*ycut.ny+dummyr*ycut.ny+y] = ycut.data[x][y].real
+    dummyr += 1
+
+lag_max = 304
+
+llist = pd.Series(ldata2)
+llist.index = pd.Series(np.ndarray(58*ycut.ny*2))
+lss = sm.tsa.stattools.acf(llist, nlags=lag_max)
+yfl1,gxl1 = test_fft_compare(lss, "_LA")
+
+rlist = pd.Series(rdata2)
+rlist.index = pd.Series(np.ndarray(58*ycut.ny*2))
+rss = sm.tsa.stattools.acf(rlist, nlags=lag_max)
+yfr1,gxr1 = test_fft_compare(rss, "_RA")
+
+
+#天体の情報を元に戻す（改良版）
 ycut = return_star(ycut,yescape)
 
 # データをXY-flipしてFITSに戻す
 data_rflip_xy_save(ycut, data, offy, filename)
 #data_rflip_xy(ycut, data, offy)
     
+
 # FITSを表示
 #fitsdsp_comp(data0, data, -10,250)
 #fitsdsp_diff(data0, data, -10,10)
