@@ -39,14 +39,15 @@ def read_fits_list(fits_list_path):
 
 
 
-def replace_nans(image, stddev):
+def replace_nans(image):
     # Replace NaN values with interpolated values
         stddev = 1.0
         max_iterations = 10
         iteration = 0
 
         while iteration < max_iterations:
-            kernel = Gaussian2DKernel(stddev, stddev)
+            # kernel = Gaussian2DKernel(stddev, stddev)
+            kernel = Gaussian2DKernel(stddev)
             image = interpolate_replace_nans(image, kernel)
 
             if np.isnan(image).sum() == 0:
@@ -77,59 +78,28 @@ def nan_gaussian_filter(image, sigma):
 
 
 
-def nan_gaussian_filter2(image, sigma):
+def nan_gaussian_filter2(image, sigma=5.):
     """
     Gaussian smoothing that ignores NaNs and renormalizes locally.
+    Fill NaN values with Gaussian-weighted mean of surroundings
+
+    Parameters:
+    image (2D array): Input image with NaN values
+    sigma (float): Standard deviation of Gaussian kernel
     """
     valid = np.isfinite(image).astype(float)
     image_filled = np.nan_to_num(image, nan=0.0)
 
     smooth_image = gaussian_filter(image_filled, sigma=sigma, mode='nearest')
     smooth_valid = gaussian_filter(valid, sigma=sigma, mode='nearest')
-
+    
+    # Compute the weighted mean of surrounding pixels
     with np.errstate(invalid='ignore', divide='ignore'):
         result = smooth_image / smooth_valid
-
+    
+    # Replace NaN with the weighted mean
     result[smooth_valid == 0] = np.nan
     return result
-
-
-
-# gauss_fill - Fill NaN values with Gaussian-weighted mean of surroundings
-def gauss_fill(image, sigma=5.):
-    """
-    Fill NaN values in the image with Gaussian-weighted mean of their surroundings.
-
-    Parameters:
-    image (2D array): Input image with NaN values
-    sigma (float): Standard deviation of Gaussian kernel
-    """
-    # Find the indices of NaN values in the image
-    mask = np.where(np.isnan(image))
-    
-    # Get image size
-    rows, cols = image.shape
-
-    # Create meshgrid for the distances of x and y index arrays
-    cj, ci  = np.meshgrid(range(cols), range(rows))
-    
-    # Iterate over each NaN value
-    for i, j in zip(mask[0], mask[1]):
-        # Compute the squared distance from the current NaN pixel to all others and
-        # Compute Gaussian weights
-        gg = np.exp(-(((ci-i)/sigma)**2+((cj-j)/sigma)**2)/2)
-        
-        # Set the weight of the NaN pixel itself to NaN
-        gg[i, j] = np.nan
-        
-        # Compute the weighted mean of surrounding pixels
-        weighted_sum = np.nansum(image * gg)
-        weight_total = np.nansum(gg)
-        
-        # Replace NaN with the weighted mean
-        image[i, j] = weighted_sum / weight_total if weight_total != 0 else np.nan
-
-    return image
 
 
 
@@ -185,7 +155,7 @@ def field_peri_noise_reduction(image, mode=0, xlim=35, ylim=200, seed=None):
     else:
         raise ValueError("Mode must be 0, 1, or 2.")
 
-    pidx = np.where(pct == 1)
+    pidx = pct
 
     # --------------------------------------------------
     # 2. Prepare mask and threshold for untouched pixels
@@ -196,7 +166,7 @@ def field_peri_noise_reduction(image, mode=0, xlim=35, ylim=200, seed=None):
     # 2. Pre-mask known noise regions
 
     # STDDEV of protected area
-    if pidx[0].size > 0:
+    if pidx.any():
         sgm = np.nanstd(dat[pidx])
     else:
         sgm = np.nanstd(dat)
@@ -205,11 +175,11 @@ def field_peri_noise_reduction(image, mode=0, xlim=35, ylim=200, seed=None):
     pmax = 3.0 * sgm
 
     # pixels small enough to be untouched
-    nidx = np.where(np.abs(dat) <= pmax)
+    nidx = np.abs(dat) <= pmax
     # ncnt = np.count_nonzero(nidx) # the number of True
 
     # protect region
-    if pidx[0].size > 0:
+    if pidx.any():
         msk[pidx] = True
     
     # --------------------------------------------------
@@ -264,8 +234,8 @@ def field_peri_noise_reduction(image, mode=0, xlim=35, ylim=200, seed=None):
 
     # indices of masked pixels
     msk_int = msk.astype(int)  # bool → int
-    fill_idx = np.where(msk_int == 1)
-    healthy = np.where(msk_int == 0)
+    fill_idx = msk
+    healthy = ~msk
 
     # --------------------------------------------------
     # 6. Suppress noise by scaling
@@ -294,7 +264,7 @@ def field_peri_noise_reduction(image, mode=0, xlim=35, ylim=200, seed=None):
     # 7. Restore protected region
     # Restore protected and untouched pixels
     # overwrite protected area by the original data
-    if pidx[0].size > 0:
+    if pidx.any():
         dat[pidx] = image[pidx]
 
     # overwrite untouched area by the original data  # Data smaller than pmax should be restored.
@@ -370,7 +340,7 @@ def field_peri_noise_reduction_rev7(image, mode=0, xlim=35, ylim=200, seed=None)
     else:
         raise ValueError("Mode must be 0, 1, or 2.")
 
-    pidx = np.where(pct == 1)
+    pidx = pct
 
     # --------------------------------------------------
     # 2. Prepare mask and threshold for untouched pixels
@@ -381,7 +351,7 @@ def field_peri_noise_reduction_rev7(image, mode=0, xlim=35, ylim=200, seed=None)
     # 2. Pre-mask known noise regions
 
     # STDDEV of protected area
-    if pidx[0].size > 0:
+    if pidx.any():
         sgm = np.nanstd(dat[pidx])
     else:
         sgm = np.nanstd(dat)
@@ -390,11 +360,11 @@ def field_peri_noise_reduction_rev7(image, mode=0, xlim=35, ylim=200, seed=None)
     pmax = 3.0 * sgm
 
     # pixels small enough to be untouched
-    nidx = np.where(np.abs(dat) <= pmax)
+    nidx = np.abs(dat) <= pmax
     # ncnt = np.count_nonzero(nidx) # the number of True
 
     # protect region
-    if pidx[0].size > 0:
+    if pidx.any():
         msk[pidx] = True
     
     # --------------------------------------------------
@@ -427,10 +397,13 @@ def field_peri_noise_reduction_rev7(image, mode=0, xlim=35, ylim=200, seed=None)
         if not np.isfinite(sgm) or sgm == 0:
             break
 
-        # cnt = np.sum(cond) # the number of True
-        cnt = np.count_nonzero(cond)
-        if cnt == 0:
+        if not cond.any():
             break
+
+        # cnt = np.sum(cond) # the number of True
+        # cnt = np.count_nonzero(cond)
+        # if cnt == 0:
+        #     break
 
         # Replace outliers with NaN and update the mask
         # Mark noisy pixels in the mask and set them to NaN in the data
@@ -478,7 +451,7 @@ def field_peri_noise_reduction_rev7(image, mode=0, xlim=35, ylim=200, seed=None)
     # 7. Restore protected region
     # Restore protected and untouched pixels
     # overwrite protected area by the original data
-    if pidx[0].size > 0:
+    if pidx.any():
         dat[pidx] = image[pidx]
 
     # overwrite untouched area by the original data  # Data smaller than pmax should be restored.
@@ -578,21 +551,6 @@ def hpfilter2(image, siglim=3.0, ksize=(2.0, 1.0)):
         imw -= ims_iter
         ima += ims_iter  # sum of removed smooth components
 
-    '''
-    while count > 0:
-        imw[mask] = np.nan
-        # ims = generic_filter(imw, np.nanmean, size=int(ksize), mode='constant', cval=np.nan)
-        ims = nan_gaussian_filter(imw, sigma=ksize)
-
-        sig = np.nanstd(imw - ims)
-        mask = (imw != 0) & (np.abs(imw - ims) > siglim * sig)
-        count = np.count_nonzero(mask)
-        # print(f"High-pass filter: {count} pixels masked.")
-        cnt_k += count
-
-    print(f"\nHigh-pass filter: {cnt_k} pixels masked in total.")
-    '''
-
     ## hpfilter 無視
     # ims = np.zeros_like(im)
 
@@ -623,7 +581,7 @@ def despiker(image, sigma=3): # sigma 5→3
     image_spikes : 2D numpy array
         The image containing only the spikes that were removed.
     """
-    imw = np.copy(image)
+    imw = image.copy()
     
     while True:
         ave = np.nanmean(imw)
@@ -631,15 +589,13 @@ def despiker(image, sigma=3): # sigma 5→3
 
         # replace spikes (outliers) with NaN
         cond = np.abs(imw - ave) > sigma * sgm
-        cnt = np.count_nonzero(cond)
-        if cnt == 0:
+        if not cond.any():
             break
         # Mark spikes in the mask and set them to NaN in the data
         imw[cond] = np.nan
 
     # Fill NaNs using Gaussian smoothing
-    imw_filled = gauss_fill(imw, sigma)
-#    imw_filled = replace_nans(imw, sigma)
+    imw_filled = replace_nans(imw)
 
     # The despiked image is the filled working image
     image_despiked = imw_filled
@@ -768,11 +724,11 @@ def tanzaku_noise_reduction(image, leftright, basename=None, outdir='./', verbos
     # Create a new image that is 4 times the size by folding the original image with 1-pixel overlap (to obtain zero imaginary data when FFT)    
     # Mirror and copy the data (the way to obtain zero imaginary data when FFT)
     im4 = np.zeros((h * 2, w * 2))
-
+    
     im4[1:h+1, 1:w+1] = im_target
-    im4[h:2*h, 1:w+1] = np.flip(im_target, axis=0) # Vertically mirror
-    im4[1:h+1, w:2*w] = np.flip(im_target, axis=1) # Horizontally mirror
-    im4[h:2*h, w:2*w] = np.flip(np.flip(im_target, axis=0), axis=1)
+    im4[h:2*h, 1:w+1] = im_target[::-1, :] # Vertically mirror
+    im4[1:h+1, w:2*w] = im_target[:, ::-1] # Horizontally mirror
+    im4[h:2*h, w:2*w] = im_target[::-1, ::-1]  # Horizontal and vertical mirror
 
     # print("shape of im4:", im4.shape)
     # print("finite of im4:", np.isfinite(im4).sum())
@@ -828,6 +784,7 @@ def tanzaku_noise_reduction(image, leftright, basename=None, outdir='./', verbos
     # fft_masked, mask_area = field_peri_noise_reduction(real_fft)
     # fft_masked, mask_area = field_peri_noise_reduction_rev7(real_fft, mode=2, xlim=preserve[0], ylim==preserve[1])
     fft_masked, mask_area = field_peri_noise_reduction_rev7(real_fft, mode=2)
+    # fft_masked, mask_area = field_peri_noise_reduction(real_fft, mode=2)
 
 
     if verbose:
@@ -869,10 +826,10 @@ def tanzaku_noise_reduction(image, leftright, basename=None, outdir='./', verbos
     reconstructed_image = np.real(reconstructed_image)
 
     print("DEBUG reconstructed_image")
-    print(" shape:", reconstructed_image.shape)
+    # print("shape:", reconstructed_image.shape)
     print("finite after ifft (reconstructed_image) :", np.isfinite(reconstructed_image).sum())
     print("min/max:", np.nanmin(reconstructed_image), np.nanmax(reconstructed_image))
-    print(" min/max:", 
+    print("min/max:", 
         np.nanmin(reconstructed_image) if np.isfinite(reconstructed_image).any() else "NaN",
         np.nanmax(reconstructed_image) if np.isfinite(reconstructed_image).any() else "NaN")
 
@@ -908,7 +865,7 @@ def tanzaku_noise_reduction(image, leftright, basename=None, outdir='./', verbos
 
 # Helper function to save a numpy array as a FITS file
 def save_fits(filepath, data):
-    print(filepath, len(data))
+    # print(filepath, len(data))
     if isinstance(data, list):
         header=fits.Header()
         hdu = fits.ImageHDU(data)
