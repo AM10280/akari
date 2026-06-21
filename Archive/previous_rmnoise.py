@@ -1001,7 +1001,7 @@ def hpfilter2(image, siglim=3.0, ksize=(2.0, 1.0)):
 
 # despike - Spike removal
 # A simple despiking function that removes spikes from an image.
-def despiker(image, sigma=5): # sigma 5→3
+def despiker(image, sigma=3): # sigma 5→3
     """
     A simple despiking function that removes spikes from an image.
 
