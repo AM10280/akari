@@ -237,8 +237,8 @@ def hpfilter(im, ksize=3, siglim=3.0):
         imw[idx] = np.nan  # Mask outliers
 
         # Apply a smoothing filter (you can switch between uniform and Gaussian)
-        ims = uniform_filter(imw, size=ksize, mode='nearest')
-        # ims = gaussian_filter(imw, sigma=ksize, mode='nearest')
+        # ims = uniform_filter(imw, size=ksize, mode='nearest')
+        ims = gaussian_filter(imw, sigma=ksize, mode='nearest')
         
         # Recalculate the standard deviation
         sig = np.nanstd(imw - ims)
@@ -247,6 +247,8 @@ def hpfilter(im, ksize=3, siglim=3.0):
 
     print(f'hpfilter: {cnt_k} pixels masked in total.')
     
+    ims = np.zeros_like(im)
+
     # High-frequency component
     imh = im - ims
 
@@ -328,6 +330,9 @@ def tanzaku_noise_reduction(image, leftright, basename=None, outdir='./', verbos
         if verbose and basename:
             save_fits(os.path.join(outdir, basename + '_hpf' + lr + '.fits'), [im_high, im_smth])
         im_target = im_high
+#    else:
+#        im_high = im_target
+#        im_smth = np.zeros_like(im_target)
     
     # Despike processing
     if not no_despike:
@@ -335,10 +340,13 @@ def tanzaku_noise_reduction(image, leftright, basename=None, outdir='./', verbos
         if verbose and basename:
             save_fits(os.path.join(outdir, basename + '_dsp' + lr + '.fits'), [im_dsp, im_spk])
         im_target = im_dsp
+#    else:
+#        im_dsp = np.zeros_like(im_target)
+#        im_spk = im_target
     
     nxg, nyg = im_target.shape
 
-    # Mirror and copy the data (the way to obtain zero imaginary data)
+    # Mirror and copy the data (the way to obtain zero imaginary data when FFT)
     im4 = np.zeros((nxg * 2, nyg * 2))
     im4[0:nxg, 0:nyg] = im_target
     im4[nxg:2*nxg, :nyg] = np.flip(im_target, axis=0)
@@ -362,7 +370,7 @@ def tanzaku_noise_reduction(image, leftright, basename=None, outdir='./', verbos
     print(f'Total imaginary component (prc) is {np.sum(np.abs(np.imag(fa)))}')
     
     if verbose and basename:
-        oim = np.stack([np.abs(fa), np.abs(np.real(fa)), np.abs(np.imag(fa))], axis=-1)
+        oim = np.stack([np.abs(fa), np.abs(np.real(fa)), np.abs(np.imag(fa))], axis=0)
 #        oim = np.zeros((nxg*2, nyg*2, 3))
 #        oim[:, :, 0] = np.abs(fa)
 #        oim[:, :, 1] = np.abs(np.real(fa))
@@ -387,11 +395,12 @@ def tanzaku_noise_reduction(image, leftright, basename=None, outdir='./', verbos
     fa = fa4 + 1j * np.zeros_like(fa4)  # Set imaginary to zero
 #    fa = np.complex128(fa4)
 
+
     # Inverse FFT
-#    im_reverse = np.real(ifft2(ifftshift(fa)))
-    im_reverse = ifft2(ifftshift(fa))
+    im_reverse = np.real(ifft2(ifftshift(fa)))
+#    im_reverse = ifft2(ifftshift(fa))
     print(f'Total imaginary component (rev) is {np.sum(np.abs(np.imag(fa)))}')
-    im_reverse = np.real(im_reverse)
+#    im_reverse = np.real(im_reverse)
     im_diff = im_reverse - im4
 
     if verbose and basename:
@@ -404,11 +413,11 @@ def tanzaku_noise_reduction(image, leftright, basename=None, outdir='./', verbos
     print(f'Output image StdDev = {sgm}')
     
     # Recover removed smooth component and spikes
-    im_reverse_1 = im_reverse[0:nxg, 0:nyg]
-    im_reverse_1 += im_spk + im_smth
+    im_reverse_0 = im_reverse[0:nxg, 0:nyg]
+    im_reverse_0 += im_spk + im_smth
     
     # Write back to the original image; tanzakudata
-    image[yran[0]:yran[1]+1, xran[0]:xran[1]+1] = im_reverse_1
+    image[yran[0]:yran[1]+1, xran[0]:xran[1]+1] = im_reverse_0
 
     return
 
@@ -482,6 +491,5 @@ def tanzakurmnoise2d(file, leftonly=False, rightonly=False, outdir='./', verbose
 
 # tanzakurmnoise2D('F0400895463_4NS.fits', leftonly=False, rightonly=False, outdir='./output/', verbose=True, nodespike=True, nohpf=True, raw=True)
 
-tanzakurmnoise2d('example.fits', leftonly=False, rightonly=False, outdir='./output', verbose=True, nodespike=False, nohpf=False, raw=False)
-
+tanzakurmnoise2d('F0436844853_4NS.fits', leftonly=False, rightonly=False, outdir='./output', verbose=True, nodespike=False, nohpf=False, raw=False)
 
