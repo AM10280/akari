@@ -789,87 +789,72 @@ def field_peri_noise_reduction_rev7(image, config: NoiseReductionConfig):
 
 
 # Region handling
+# Dictionary
+REGIONS = {
+    "LEFT":  (slice(3, 303), slice(6, 64), "_L"),
+    "RIGHT": (slice(3, 303), slice(69, 127), "_R"),
+}
 
-def extract_regions(im_target: np.ndarray) -> Dict[str, Tuple[np.ndarray, Tuple]]:
+def extract_region(image: np.ndarray, side: str):
     """Extract LEFT and RIGHT detector regions."""
-    y = slice(3, 303)
-
-    return {
-        "LEFT": (im_target[y, 6:64].copy(), (y, slice(6, 64))),
-        "RIGHT": (im_target[y, 69:127].copy(), (y, slice(69, 127))),
-    }
+    """Return region view and metadata."""
+    y, x, tag = REGIONS[side]
+    return image[y, x], y, x, tag
 
 
 # ======================================
 # Core pipeline
 # ======================================
 
-def tanzaku_noise_reduction(
-    image, left_right, basename, config: NoiseReductionConfig, io: IOConfig) -> None:
-    """Process a single region. 
+def tanzaku_noise_reduction(image, side, basename, config, io):
+    """Process a single region (LEFT or RIGHT region) in-place. 
     Process the first and second lines of the tanzaku separately.
     Perform noise reduction on a tanzaku image."""
     start_time = time.process_time()
 
     # Create a config instance
-    config = NoiseReductionConfig()
-    io = IOConfig()
+    # config = NoiseReductionConfig()
+    # io = IOConfig()
 
-    outdir =  io.outdir
-    verbose = io.verbose
-    no_hpf = io.no_hpf
-    no_despike = io.no_despike
-
-    if basename is None:
-        verbose = False
-
-    os.makedirs(outdir, exist_ok=True)
-    
+    os.makedirs(io.outdir, exist_ok=True)
+    verbose = io.verbose and basename is not None
 
     # Process LEFT (row1) or RIGHT (row2) region in-place.
-    # Check whether left_right is "LEFT" or "RIGHT"
-    assert left_right in ("LEFT", "RIGHT")
-    
+    # Check whether side is "LEFT" or "RIGHT".
+    assert side in REGIONS
+
     # Region selection
     # Extract target region
-    if left_right == "LEFT":
-        xran = np.array([0, 58]) + 6
-        lr = "_L"
-    else:
-        xran = np.array([0, 58]) + 69
-        lr = "_R"
-     
-    yran = np.array([0, 300]) + 3
-    im_target = image[yran[0]:yran[1], xran[0]:xran[1]].copy()
-    
+    region, y, x, lr = extract_region(image, side)
+    im_target = region.copy()  # copy once (we modify)
 
 
-    # left_right = extract_regions(image)
-
-
+    # ------------------------------
+    # High-pass filter
+    # ------------------------------
     # High-pass filtering
-    if not no_hpf:
+    if not io.no_hpf:
         # im_high, im_smth = hpfilter(im_target)
-        im_high, im_smth = hpfilter2(im_target)
+        im_target, im_smth = hpfilter2(im_target)
         if verbose:
-            # save_fits(os.path.join(outdir, basename + '_hpf' + lr + '.fits'), [im_high, im_smth])
-            save_fits(os.path.join(outdir, basename + '_hpf' + lr + '.fits'), np.hstack([im_high, im_smth]))
-        im_target = im_high
+            save_fits(os.path.join(outdir, basename + '_hpf' + lr + '.fits'), [im_target, im_smth])
+            # save_fits(os.path.join(io.outdir, basename + '_hpf' + lr + '.fits'), np.hstack([im_target, im_smth]))
     else:
-        im_high = im_target
         im_smth = np.zeros_like(im_target)
     
-    # Despiking
-    if not no_despike:
-        im_dsp, im_spk = despiker(im_target)
+    # ------------------------------
+    # Despike
+    # ------------------------------
+    # Despike
+    if not io.no_despike:
+        im_target, im_spk = despiker(im_target)
         if verbose:
-            # save_fits(os.path.join(outdir, basename + '_dsp' + lr + '.fits'), [im_dsp, im_spk])
-            save_fits(os.path.join(outdir, basename + '_dsp' + lr + '.fits'), np.hstack([im_dsp, im_spk]))
-        im_target = im_dsp
+            save_fits(os.path.join(outdir, basename + '_dsp' + lr + '.fits'), [im_target, im_spk])
+            # save_fits(os.path.join(io.outdir, basename + '_dsp' + lr + '.fits'), np.hstack([im_target, im_spk]))
     else: 
-        im_dsp = im_target
         im_spk = np.zeros_like(im_target)
     
+
     # Get the image size
     shape = im_target.shape
 
@@ -877,13 +862,16 @@ def tanzaku_noise_reduction(
     folded_image = mirror(im_target, shape)
 
     if verbose:
-        save_fits(os.path.join(outdir, basename + '_src' + lr + '.fits'), folded_image)    
+        save_fits(os.path.join(io.outdir, basename + '_src' + lr + '.fits'), folded_image)
 
     # Evaluate StdDev before processing
-    ave = np.nanmean(folded_image)
-    sgm = np.nanstd(folded_image)
-    logger.info('Input image StdDev = %f', sgm)
+    # ave = np.nanmean(folded_image)
+    # sgm = np.nanstd(folded_image)
+    logger.info('Input image StdDev = %f', np.nanstd(folded_image))
     
+    # ------------------------------
+    # FFT
+    # ------------------------------
     # Perform 2D FFT
     fft_image = fft2(folded_image, workers=-1)
     if config.use_fftshift:
@@ -896,77 +884,89 @@ def tanzaku_noise_reduction(
     # abs, real, imaginary components of Fourier transformed image (3 dimension)
     if verbose:
         oim = np.stack([np.abs(fft_image), np.abs(np.real(fft_image)), np.abs(np.imag(fft_image))], axis=0)        
-        # oim = np.zeros((h*2, w*2, 3))
+        # oim = np.zeros((shape[0]*2, shape[1]*2, 3))
         # oim[:, :, 0] = np.abs(fft_image)
         # oim[:, :, 1] = np.abs(np.real(fft_image))        
         # oim[:, :, 2] = np.abs(np.imag(fft_image))
 
-        save_fits(os.path.join(outdir, basename + '_fft' + lr + '.fits'), oim)
+        save_fits(os.path.join(io.outdir, basename + '_fft' + lr + '.fits'), oim)
     
-
+    # Crop
     # Extract the left top region in Fourier space (original image's size)
-    fft_image_o = fft_image[0:shape[0]+1, 0:shape[1]+1]  # ← Add one more to overlap the central axis section. 軸合わせのため1つ多め
+    fft_image_o = fft_image[:shape[0]+1, :shape[1]+1]  # ← Add one more to overlap the central axis section. 軸合わせのため1つ多め
+    # real part
     real_fft = np.real(fft_image_o)
+
     if verbose:
-        save_fits(os.path.join(outdir, basename + '_fft_oreal' + lr + '.fits'), np.abs(real_fft))
+        save_fits(os.path.join(io.outdir, basename + '_fft_oreal' + lr + '.fits'), np.abs(real_fft))
 
     # logger.info("finite of real_fft: %d", np.isfinite(real_fft).sum())
     # logger.info("min/max: %f, %f", np.nanmin(real_fft), np.nanmax(real_fft))
 
-    # Apply a noise reduction filter
+    # ------------------------------
+    # Noise reduction
+    # ------------------------------
+    # Apply a noise reduction filter in freq domain
     # fft_masked, mask_area = field_peri_noise_reduction(real_fft, config)
     fft_masked, mask_area = field_peri_noise_reduction_rev7(real_fft, config)
 
     if verbose:
-        save_fits(os.path.join(outdir, basename + '_fftm' + lr + '.fits'), np.abs(fft_masked))
-        save_fits(os.path.join(outdir, basename + '_msk' + lr + '.fits'), np.abs(mask_area))
+        save_fits(os.path.join(io.outdir, basename + '_fftm' + lr + '.fits'), np.abs(fft_masked))
+        save_fits(os.path.join(io.outdir, basename + '_msk' + lr + '.fits'), np.abs(mask_area))
     
     # logger.info("finite of real_fft: %d", np.isfinite(fft_masked).sum())
     # logger.info("min/max: %f, %f", np.nanmin(fft_masked), np.nanmax(fft_masked))
 
-
+    # Reconstruct
     # Refold the masked Fourier image (with 1-pixel overlap)
     # Mirror updated fft_masked to folded_fft_masked
     folded_fft_masked = mirror_reconstruct(fft_masked, shape)
     
-
     if verbose:
-        save_fits(os.path.join(outdir, basename + '_fa4' + lr + '.fits'), np.abs(folded_fft_masked))
+        save_fits(os.path.join(io.outdir, basename + '_fa4' + lr + '.fits'), np.abs(folded_fft_masked))
     
     # Set imaginary to zero
     folded_fft_masked = folded_fft_masked + 1j * np.zeros_like(folded_fft_masked)
+    # folded_fft_masked = folded_fft_masked.astype(np.complex128)
 
     # Perform inverse Fourier Transform
     # Inverse shift the zero frequency back
     if config.use_fftshift:
         folded_fft_masked = ifftshift(folded_fft_masked)
-    
 
+    # ------------------------------
+    # Inverse FFT
+    # ------------------------------
     # Inverse Fourier Transform to recover the image
-    # reconstructed_image = np.real(ifft2(folded_fft_masked))
-    reconstructed_image = ifft2(folded_fft_masked)
-    logger.info('Total imaginary component (inverse FFT) is %s', np.sum(np.abs(np.imag(reconstructed_image))))
-    reconstructed_image = np.real(reconstructed_image)
+    # reconstructed_image = ifft2(folded_fft_masked)
+    # logger.info('Total imaginary component (inverse FFT) is %s', np.sum(np.abs(np.imag(reconstructed_image))))
+    # reconstructed_image = np.real(reconstructed_image)
+    reconstructed_image = np.real(ifft2(folded_fft_masked))
 
+    '''
     logger.info("DEBUG reconstructed_image")
-    # logger.info("shape: %s", reconstructed_image.shape)
+    logger.info("shape: %s", reconstructed_image.shape)
     logger.info("finite after ifft (reconstructed_image) : %d", np.isfinite(reconstructed_image).sum())
     logger.info("min/max: %f, %f", np.nanmin(reconstructed_image), np.nanmax(reconstructed_image))
     logger.info("min/max: %s, %s", 
         np.nanmin(reconstructed_image) if np.isfinite(reconstructed_image).any() else "NaN",
         np.nanmax(reconstructed_image) if np.isfinite(reconstructed_image).any() else "NaN")
+    '''
 
     im_difference = reconstructed_image - folded_image
 
     if verbose:
-        save_fits(os.path.join(outdir, basename + '_rev' + lr + '.fits'), reconstructed_image)
-        save_fits(os.path.join(outdir, basename + '_dif' + lr + '.fits'), im_difference)
+        save_fits(os.path.join(io.outdir, basename + '_rev' + lr + '.fits'), reconstructed_image)
+        save_fits(os.path.join(io.outdir, basename + '_dif' + lr + '.fits'), im_difference)
 
     # Evaluate StdDev after processing
-    ave = np.nanmean(reconstructed_image)
-    sgm = np.nanstd(reconstructed_image)
-    logger.info("Output image StdDev = %s", sgm)
+    # ave = np.nanmean(reconstructed_image)
+    # sgm = np.nanstd(reconstructed_image)
+    logger.info("Output image StdDev = %s", np.nanstd(reconstructed_image))
     
+    # ------------------------------
+    # Crop back to original and restore components
+    # ------------------------------
     # Cut to original size
     reconstructed_image_o = reconstructed_image[1:shape[0]+1, 1:shape[1]+1]
 
@@ -974,69 +974,51 @@ def tanzaku_noise_reduction(
     reconstructed_image_o += im_spk + im_smth
     
     # Write back to the original image; tanzakudata
-    image[yran[0]:yran[1], xran[0]:xran[1]] = reconstructed_image_o
+    image[y, x] = reconstructed_image_o
 
 
     # 時間計測 Time measurement
     end_time = time.process_time()
     elapsed_time = end_time - start_time
     logger.info("経過時間： %s", elapsed_time)
+    # logger.info("Elapsed time: %.3f sec", time.process_time() - start_time)
 
     return
 
 
-
-
-
+# =======================
 # Main routine
-# Entry points
+# =======================
 
-def tanzaku_rmnoise_2d(file, config: NoiseReductionConfig, io: IOConfig):
+def tanzaku_rmnoise_2d(file, config, io):
     """
     Main processing function.
     Perform noise reduction and processing on a tanzaku image.
     """
     start_time = time.process_time()
 
-    config = NoiseReductionConfig()
-    io = IOConfig()
+    if not os.path.exists(file):
+        raise FileNotFoundError(file)
 
-    leftonly = io.leftonly
-    rightonly = io.rightonly
-    outdir = io.outdir
-    verbose = io.verbose
-    no_hpf = io.no_hpf
-    no_despike = io.no_despike
-    raw = io.raw
-
-
-    if 'outdir' not in locals():
-        outdir = './'
+    os.makedirs(io.outdir, exist_ok=True)
 
     basename = os.path.basename(file).replace('.fits.gz', '').replace('.fits', '')
 
-    if basename is None:
-        verbose = False
-    if not os.path.exists(outdir):
-        os.makedirs(outdir)
-    
-    if not os.path.exists(file):
-        raise FileNotFoundError(f"{file} not found.")
-
-    
+    # Read FITS
     # Read the input tanzaku data
     im0, hd0 = read_fits(file)
     im0 = im0.astype(np.float64)
 
     # Extract NAXIS1 and NAXIS2 from header
-    nx = hd0['NAXIS1']
-    ny = hd0['NAXIS2']
+    # nx = hd0['NAXIS1']
+    # ny = hd0['NAXIS2']
     
+    # Optional differentiation
     # Perform differentiation
-    if raw:
+    if io.raw:
         im0[:, 0] = 0
         imd = im0 - np.roll(im0, shift=1, axis=1)
-        imd[:, 0:2] = 0
+        imd[:, :2] = 0
     else:
         imd = im0.copy()
 
@@ -1047,43 +1029,35 @@ def tanzaku_rmnoise_2d(file, config: NoiseReductionConfig, io: IOConfig):
     # Apply noise reduction for LEFT (row1) and RIGHT (row2) if applicable
     if not io.rightonly:
         # logger.info('Processing LEFT of %s', file)
-        tanzaku_noise_reduction(imd, 'LEFT', basename=basename, config=config, io=io)
-        # tanzaku_noise_reduction(imd, 'LEFT', basename=basename, outdir=outdir, verbose=verbose, no_hpf=nohpf, no_despike=nodespike)
+        tanzaku_noise_reduction(imd, "LEFT", basename, config, io)
     if not io.leftonly:
         # logger.info('Processing RIGHT of %s', file)
-        tanzaku_noise_reduction(imd, 'RIGHT', basename=basename, config=config, io=io)
-        # tanzaku_noise_reduction(imd, 'RIGHT', basename=basename, outdir=outdir, verbose=verbose, no_hpf=nohpf, no_despike=nodespike)
+        tanzaku_noise_reduction(imd, "RIGHT", basename, config, io)
 
+    # Reconstruct
     # Integrate back
     # Integrating to reconstruct the original form
-    if raw:
+    if io.raw:
         imd[:, 0] = 0
-        imi = np.cumsum(imd, axis=1)
-        imo = imi.copy()
+        imo = np.cumsum(imd, axis=1)
     else:
-        imo = imd.copy()
+        imo = imd
 
-    if not verbose:
-        # Writing output data
-        fout = os.path.join(outdir, basename + '.fits')
-        fits.writeto(fout, imo, hd0, overwrite=True)
+    # Save output
+    # Writing output data
+    suffix = "_pnr" if io.verbose else ""
+    fout = os.path.join(io.outdir, basename + suffix + '.fits')
+    fits.writeto(fout, imo, hd0, overwrite=True)
 
-
-    if verbose:
-
-        # Writing output data
-        fout = os.path.join(outdir, basename + '_pnr.fits')
-        fits.writeto(fout, imo, hd0, overwrite=True)
-        
+    if io.verbose:        
         # Writing differential data
-        ftdf = os.path.join(outdir, basename + '_tdf.fits')
+        ftdf = os.path.join(io.outdir, basename + '_tdf.fits')
         fits.writeto(ftdf, imd - imd_org, hd0, overwrite=True)
-
-    
 
     # std = np.nanstd(imd - imd_org, dtype=np.float64)
     # mean = np.nanmean(imd_org, dtype=np.float64)
     # logger.info("TDF StdDev = %f, %f", std, std / mean)
+    # logger.info("Total elapsed: %.3f sec", time.process_time() - start_time)
 
     return
     
@@ -1094,11 +1068,7 @@ def rmnoise_list(fits_list_path):
     input_files = read_fits_list(fits_list_path)
     for f in input_files:
         file = f + '.fits'
-        # tanzakurmnoise2d(file, leftonly=False, rightonly=False, outdir='./after_rmnoise', verbose=True, nodespike=False, nohpf=False, raw=False)
-        # tanzakurmnoise2d(file, leftonly=False, rightonly=False, outdir='./after_rmnoise', verbose=False, nodespike=False, nohpf=False, raw=False)
         tanzaku_rmnoise_2d(file, config = NoiseReductionConfig(), io = IOConfig())
-
-
 
 
 if __name__ == "__main__":
