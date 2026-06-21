@@ -133,7 +133,9 @@ def plot_profile(profile_x, season, outdir='./profile_ave'):
     # plt.plot(median_profile, label='Median Profile', color='r', alpha=0.7)
     # plt.ylim(-16.2, 7)
     # plt.ylim(0, 225)
-    plt.ylim(0, 250)
+    # plt.ylim(320, 410)
+    plt.ylim(390, 410)
+    # plt.ylim(0, 250)
     # plt.ylim(-34, 11) # average, each 2 rows
     plt.xlabel('Pixel (X-direction)')
     plt.ylabel('Power')
@@ -158,7 +160,7 @@ def plot_profile_diff(profile_x, season, outdir='./profile_ave_diff'):
     # plt.plot(median_profile, label='Median Profile', color='r', alpha=0.7)
     # plt.ylim(-16.2, 7)
     # plt.ylim(0, 225)
-    plt.ylim(-34, 11) # average, each 2 rows
+    # plt.ylim(-34, 11) # average, each 2 rows
     plt.xlabel('Pixel (X-direction)')
     plt.ylabel('Power')
     plt.title('Average Profiles')
@@ -239,21 +241,22 @@ def de_stripes_outer(fits_files, season):
     # Create a (mean or median) profile along the X-direction
     profile_x = np.mean(mean_image_cropped, axis=0)
 
-    # save_profile(profile_x, season)
-    # plot_profile(profile_x, season, outdir='./profile_ave')
+    save_profile(profile_x, season)
+    plot_profile(profile_x, season, outdir='./profile_ave')
 
 
     
     # Normalize and prepare the pattern image
-    x_range1, x_range2 = (6, 63), (69, 126)
+    # x_range1, x_range2 = (6, 63), (69, 126) # 9 um
+    x_range1, x_range2 = (1, 58), (64, 122) # 18 um
     mean_val1 = np.mean(profile_x[x_range1[0]:x_range1[1] + 1])
     mean_val2 = np.mean(profile_x[x_range2[0]:x_range2[1] + 1])
     profile_diff = np.zeros_like(profile_x)
     profile_diff[x_range1[0]:x_range1[1] + 1] = profile_x[x_range1[0]:x_range1[1] + 1] - mean_val1
     profile_diff[x_range2[0]:x_range2[1] + 1] = profile_x[x_range2[0]:x_range2[1] + 1] - mean_val2
 
-    # save_profile_diff(profile_diff, season)
-    # plot_profile_diff(profile_diff, season, outdir='./profile_ave_diff')
+    save_profile_diff(profile_diff, season)
+    plot_profile_diff(profile_diff, season, outdir='./profile_ave_diff')
 
     # Create a 2D pattern image based on the 1D profile difference
     # pattern_image_d = np.tile(profile_diff, (mean_image.shape[0], 1))
