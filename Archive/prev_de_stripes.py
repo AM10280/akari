@@ -133,7 +133,7 @@ def plot_profile(profile_x, season, outdir='./profile_ave'):
     # plt.plot(median_profile, label='Median Profile', color='r', alpha=0.7)
     # plt.ylim(-16.2, 7)
     # plt.ylim(0, 225)
-    # plt.ylim(0, 250)
+    plt.ylim(0, 250)
     # plt.ylim(-34, 11) # average, each 2 rows
     plt.xlabel('Pixel (X-direction)')
     plt.ylabel('Power')
@@ -281,23 +281,22 @@ def de_stripes_outer(fits_files, season):
     # pattern_image = np.tile(profile_diff, (stacked_image.shape[0], 1))
     # pattern_image = np.tile(profile_x, (stacked_image.shape[0], 1))
     # pattern_image = np.tile(profile_section, (mean_image.shape[0], 1))
-    pattern_image = np.tile(profile_x, (mean_image.shape[0], 1))
+    # pattern_image = np.tile(profile_x, (mean_image.shape[0], 1))
+    pattern_image = np.tile(profile_diff, (mean_image.shape[0], 1))
 
     # save_fits(pattern_image, 'pattern_image')
     
     return pattern_image
 
 
-def de_stripes_list(fits_list_path, pattern_list_path):
+def de_stripes_list(fits_list_path):
     """Main function to process all files."""
     fits_files = read_fits_list(fits_list_path)
-    pattern_fits_files = read_fits_list(pattern_list_path)
-    pattern_image = de_stripes_outer(pattern_fits_files, pattern_list_path)
+    pattern_image = de_stripes_outer(fits_files, fits_list_path)
     for file in fits_files:
         de_stripes(file, pattern_image)
 
 
 if __name__ == "__main__":
     fits_list_path = sys.argv[1]
-    pattern_list_path = sys.argv[2]
-    de_stripes_list(fits_list_path, pattern_list_path)
+    de_stripes_list(fits_list_path)
