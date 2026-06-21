@@ -483,9 +483,6 @@ def tanzaku_noise_reduction(image, leftright, basename=None, outdir='./', verbos
     # save_fits(os.path.join(outdir, basename + '_fft_o' + lr + '.fits'), np.abs(fft_image_o))
     # Apply a noise reduction filter     
     real_fft = np.real(fft_image_o)
-
-    save_fits(os.path.join(outdir, basename + '_fft_oreal' + lr + '.fits'), np.abs(real_fft))
-    
     if verbose:
         save_fits(os.path.join(outdir, basename + '_fft_oreal' + lr + '.fits'), np.abs(real_fft))
 
@@ -664,7 +661,6 @@ def tanzakurmnoise2d(file, leftonly=False, rightonly=False, outdir='./', verbose
     if verbose:
 
         # Writing output data
-        # fout = os.path.join(outdir, basename + '.fits')
         fout = os.path.join(outdir, basename + '_pnr.fits')
         fits.writeto(fout, imo, hd0, overwrite=True)
         
@@ -717,7 +713,7 @@ def tanzakurmnoise2d(file, leftonly=False, rightonly=False, outdir='./', verbose
 def rmnoise_list(fits_list_path):    
     input_files = read_fits_list(fits_list_path)
     for f in input_files:
-        file = f + '.fits'
+        # file = f + '.fits'
         tanzakurmnoise2d(file, leftonly=False, rightonly=False, outdir='./output', verbose=False, nodespike=False, nohpf=False, raw=False)
         # tanzakurmnoise2d(file, leftonly=False, rightonly=False, outdir='./output', verbose=True, nodespike=False, nohpf=False, raw=False)
 
