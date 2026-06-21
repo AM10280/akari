@@ -1,655 +1,688 @@
-#自動でノイズ範囲を決定→マスク（高速）
 import sys
 import numpy as np
-import csv
-import pprint
-from astropy.io import fits
-# from astropy.convolution import convolve, convolve_fft
-from astropy.convolution import Gaussian2DKernel, interpolate_replace_nans
-import matplotlib.pyplot as plt
-import statistics
-import statsmodels.api as sm
-import pandas as pd
-import math
-import scipy.optimize
+from scipy.fft import fft2, ifft2, fftshift, ifftshift
+from scipy.ndimage import uniform_filter, generic_filter, gaussian_filter
 from scipy import stats
-import copy
-import os
+from astropy.io import fits
+# from astropy.stats import sigma_clip
+from astropy.convolution import convolve, convolve_fft, Gaussian2DKernel, Box2DKernel, interpolate_replace_nans
+# from astropy.fft import fft2, fftshift
+import matplotlib.pyplot as plt
 import time
-import bottleneck as bn
+import os
 
-#time0 = time.time()
 
-YES,NO = (1,0)
-pltave=NO   # サンプルをプロットする際に平均をプロットするか
 
-# 短冊FITS一つを格納する構造体
-# データ処理しやすいようにdata[y][x]ではなくdata[x][y]の形式で保持
-class Ycut:
-    def __init__(self, nx,ny):
-        self.nx = nx
-        self.ny = ny
-        self.data = np.zeros((nx,ny), dtype=complex) # data[nx][ny] 複素数
-        self.gx   = np.arange(0,ny)                  # gx[ny]  X軸用
-        self.ave  = np.zeros(ny, dtype=complex)      # ave[ny] 平均
+
+
+def read_fits(file):
+    """Reads a FITS file and returns the image data and header."""
+    with fits.open(file) as hdul:
+        data = hdul[0].data
+        header = hdul[0].header
+    return data, header
+
+def write_fits(file, data, header):
+    """Writes data to a FITS file with the provided header."""
+    hdu = fits.ImageHDU(data, header=header)
+#    hdr = fits.Header()
+    primary_hdu = fits.PrimaryHDU(header=header)
+    hdul = fits.HDUList([primary_hdu, hdu])
+    hdul.writeto(file, overwrite=True)
+
+
+'''
+'''
+
+
 
 
 # Read the list of FITS files
 def read_fits_list(fits_list_path):
     with open(fits_list_path, 'r') as file:
-        file_path = file.read().splitlines()
-#        fitsname = os.path.basename(file_path)
-    return file_path
+        file_paths = file.read().splitlines()
+#        fitsname = os.path.basename(file_paths)
+    return file_paths
 
-# FITSを読み込んで二次元配列 data[][] に格納する
-def data_from_fits(fname):
-    hdulist = fits.open(fname)
-    hdu  = hdulist[0]
-    data = hdu.data
-    header = hdu.header
-#    print(header[17])
-    return(data, header)
 
-# data[y][x]→ ycut.data[x][y-offy]
-def data_flip_xy(data, offy):
-    ny,nx = (len(data)-offy, len(data[0]))
-    ycut = Ycut(nx,ny)
-    for x in range(0, nx):
-        for y in range (0, ny):
-            ycut.data[x][y] = complex(data[y+offy][x], 0)
-    return(ycut)
 
-# 天体(over and on median *3 )の情報を抜く
-def escape_star(ycut,data,xlim1,xlim2, ylim1,ylim2):
-#    ave,std = imstat(data, 10,50, 50,250)
-    med = np.median(data) #to be updated 04/19/2024
-#    print(med)
-    nx,ny = (ycut.nx, ycut.ny)
-    yescape = Ycut(nx,ny)
-    for x in range(xlim1, xlim2):
-        for y in range(ylim1, ylim2):
-            if ycut.data[x][y] >= med * 3:
-                yescape.data[x][y] = ycut.data[x][y]
-                ycut.data[x][y] = np.nan
-            else:
-                yescape.data[x][y] = 0
-    for x in range(xlim1+63, xlim2+63):
-        for y in range(ylim1, ylim2):
-            if ycut.data[x][y] >= med * 3:
-                yescape.data[x][y] = ycut.data[x][y]
-                ycut.data[x][y] = np.nan
-            else:
-                yescape.data[x][y] = 0
-# Replace NaN values with interpolated values
-    stddev = 1.0
-    max_iterations = 5
-    iteration = 0
 
-    while iteration < max_iterations:
-        kernel = Gaussian2DKernel(stddev)
-        ycut.data = interpolate_replace_nans(ycut.data, kernel)
+# field_sigma - Remove outliers more than 3 sigma from the mean and replace with NaN
+# derive stddev of non-signal region.
+def field_sigma(image, output_path='output/test.fits'):
+    # Copy the image to a local variable
+    dat = np.copy(image)
+    
+    # Repeat until no more outliers are found
+    while True:
+        ave = np.nanmean(dat)  # Calculate the mean, ignoring NaNs
+        sgm = np.nanstd(dat)   # Calculate the standard deviation, ignoring NaNs
+        
+        # Identify outliers (more than 3 sigma away from the mean)
+        outliers = np.abs(dat - ave) > 3 * sgm
+        
+        # Count the number of outliers
+        cnt = np.sum(outliers)
+        
+        if cnt == 0:
+            break  # Exit the loop if no more outliers are found
+        
+        # Replace outliers with NaN
+        dat[outliers] = np.nan
+    
+    # Write the cleaned data to a FITS file
+    fits.writeto(output_path, dat, overwrite=True)
 
-        if np.isnan(ycut.data).sum() == 0:
+    return ave, sgm    
+
+
+
+def replace_nans0(image, stddev):
+    # Replace NaN values with interpolated values
+    kernel = Gaussian2DKernel(stddev)
+    image = interpolate_replace_nans(image, kernel)
+
+    return image
+
+
+def replace_nans(image, stddev):
+    # Replace NaN values with interpolated values
+        stddev = 1.0
+        max_iterations = 10
+        iteration = 0
+
+        # use this for the scipy convolution
+        # img_zerod = image.copy()
+        # img_zerod[np.isnan(image)] = 0
+
+        while iteration < max_iterations:
+            kernel = Gaussian2DKernel(stddev, stddev)
+            # astropy_conv = convolve(image, kernel)
+            image = interpolate_replace_nans(image, kernel)
+
+            if np.isnan(image).sum() == 0:
+                break
+            stddev += 1
+            iteration += 1
+            image = image
+        if iteration < max_iterations:
+            print(f"Interpolated by a Gaussian 2D kernel with the stddev of {stddev}")
+        return image
+
+
+
+def nan_uniform_filter(image, size):
+   return generic_filter(image, np.nanmean, size=size, mode='constant', cval=np.nan)
+
+
+def nan_box2_filter(image, width):
+   kernel = Box2DKernel(width=width)
+   smoothed_data = convolve(image, kernel, boundary='extend', nan_treatment='interpolate')
+   return smoothed_data
+
+
+def nan_gaussian_filter(image, sigma):
+   kernel = Gaussian2DKernel(x_stddev=sigma)
+   smoothed_data = convolve(image, kernel, boundary='extend', nan_treatment='interpolate')
+   return smoothed_data
+
+
+
+
+
+# gauss_fill - Fill NaN values with Gaussian-weighted mean of surroundings
+def gauss_fill(image, sigma=5.):
+    """
+    Fill NaN values in the image with Gaussian-weighted mean of their surroundings.
+
+    Parameters:
+    image (2D array): Input image with NaN values
+    sigma (float): Standard deviation of Gaussian kernel
+    """
+    # Find the indices of NaN values in the image
+    mask = np.where(np.isnan(image))
+    
+    # Get image size
+    rows, cols = image.shape
+
+    # Create meshgrid for the distances of x and y index arrays
+    cj, ci  = np.meshgrid(range(cols), range(rows))
+    
+    # Iterate over each NaN value
+    for i, j in zip(mask[0], mask[1]):
+        gg = np.exp(-(((ci-i)/sigma)**2+((cj-j)/sigma)**2)/2)
+        # Compute the squared distance from the current NaN pixel to all others
+        # rr = (ci - i)**2 + (cj - j)**2
+        # Compute Gaussian weights
+        # gg = np.exp(-rr / (2 * sigma**2))
+        
+        # Set the weight of the NaN pixel itself to NaN
+        gg[i, j] = np.nan
+        
+        # Compute the weighted mean of surrounding pixels
+        weighted_sum = np.nansum(image * gg)
+        weight_total = np.nansum(gg)
+        
+        # Replace NaN with the weighted mean
+        image[i, j] = weighted_sum / weight_total if weight_total != 0 else np.nan
+
+    return image
+
+
+
+
+
+
+# derive stddev of non-signal region.
+def field_peri_noise_reduction(image, yrange=250):  # yrange 調整
+
+    # Copy the first 250 rows of the image
+    dat = image[0:yrange, :].copy()
+    # dat = np.copy(image[:yrange, :])  # deepcopy if n-dimensional array, have memories, take time
+    
+    # Initialize a mask
+    msk = np.zeros(dat.shape, dtype=int)
+    
+    while True:
+        # Calculate mean and standard deviation, ignoring NaNs
+        ave = np.nanmean(dat)
+        sgm = np.nanstd(dat)
+        cond = np.abs(dat - ave) > sgm * 3    # condition  ## find mask regions
+        # cnt = np.sum(cond) # the number of True
+        cnt = np.count_nonzero(cond)
+        if cnt == 0:
             break
-        stddev += 1
-        iteration += 1
-        ycut.data = ycut.data
-#    if iteration < max_iterations:
-#        print(f"Interpolated by a Gaussian 2D kernel with the stddev of {stddev}")
+        # Mark noisy pixels in the mask and set them to NaN in the data
+        dat[cond] = np.nan
+        msk[cond] = 1
 
-    return(ycut,yescape)
-
-#天体の情報を元に戻す
-def return_star(ycut,yescape):
-    for x in range(0, ycut.nx):
-        for y in range(0, ycut.ny):
-            if yescape.data[x][y] > 0:
-                ycut.data[x][y] = yescape.data[x][y]
-    return(ycut)
-
-#ノイズを除去_左右両用(6data)
-def rm_noise_6data(yf,msk_range, xlim1, xlim2):
-    for x in range(xlim1,xlim2):
-        for y in range(0,yf.ny):
-            if msk_range[2*y] == 1:
-#                nm = 0
-                nm = 0+0j
-                n = 0
-                i = 0
-                while n < 3 and y+1+i < yf.ny:
-                    if msk_range[2*y+1+i] == 0:
-                        nm += yf.data[x][y+1+i]
-                        n += 1
-                    i += 1
-                m = 0
-                j = 0
-                while m < 3 and y-1-j >= 0:
-                    if msk_range[2*y-1-j] == 0:
-                        nm += yf.data[x][y-1-j]
-                        m += 1
-                    j += 1
-                ave = nm / (n + m)
-                yf.data[x][y] = ave
-    return()
-
-#パワースペクトルにマスクをかけてスムージング
-#def rm_noise_PS(gx,yf,rolling_yf,msk_range,snumber):
-def rm_noise_PS(yf,msk_range):
-    for y in range(0,304):
-        if msk_range[y] == 1:
-#            nm = 0
-            nm = 0+0j
-            n = 0
-            i = 0
-            while n < 3:
-                if msk_range[y+i] == 0:
-#                    nm += np.abs(yf[y-3+n])+np.abs(yf[y+1+i])
-                    nm += (yf[y-3+n])+(yf[y+1+i])
-                    n += 1
-                    i += 1
-                elif msk_range[y+i] != 0:
-                    i += 1
-            ave = nm/n/2
-            yf[y] = ave
-
-    for y in range(0,303):
-        yf[607-y] = yf[y]
-    return(yf)
-
-# Ycut構造体の全pixelデータについて、1次元FFTをする
-def ycut_fft(ycut, x1,x2):
-    nx,ny = (ycut.nx, ycut.ny)
-    yf = Ycut(nx,ny)
-    for x in range(x1-1, x2):
-        yf.data[x] = np.fft.fft(ycut.data[x])/(ny/2.)
-    yf.ave = np.fft.fft(ycut.ave)/(ny/2.)
-    yf.gx  = np.linspace(0, 1.0/1.0, ny)
-    return(yf)
-
-# Ycut構造体の全pixelデータについて、1次元のinverse FFTをする
-def yf_ifft(yf, x1,x2):
-    nx,ny = (yf.nx, yf.ny)
-    ycut = Ycut(nx,ny)
-    for x in range(x1-1, x2):
-        ycut.data[x] = np.fft.irfft(yf.data[x]*(ny/2.), ny)
-    ycut.ave = np.fft.irfft(yf.ave*(ny/2.), ny)
-    #ycut.gx  = np.linspace(0, 1.0/1.0, ny)
-    return(ycut)
-
-# ycut.data[x][y-offy]→ data[y][x]->save fits
-def data_rflip_xy_save(ycut, data, header, offy, filename):
-    for x in range(0, ycut.nx):
-        for y in range (0, ycut.ny):
-            data[y+offy][x] = ycut.data[x][y].real
-            
-    path = os.getcwd()
-#    os.chdir('%s/output'%path)
-    hdu = fits.PrimaryHDU(data, header)
-    hdulist = fits.HDUList([hdu])
-#    hdulist.writeto('%s.fits' %filename)
-    hdulist.writeto('%s/output/%s.fits' %(path, filename))
-    return(data)
-
-# ycut.data[x][y-offy]→ data[y][x]
-def data_rflip_xy(ycut, data, offy):
-    for x in range(0, ycut.nx):
-        for y in range (0, ycut.ny):
-            data[y+offy][x] = ycut.data[x][y].real
-    return(data)
-
-'''
-# datax2を同じカラースケールで並べて表示する
-def fitsdsp_comp(data1,data2, vmin,vmax):
-    ave,std = imstat(data1, 10,60, 100,250)
-    plt.subplot(1,2,1)
-    plt.title('before (%.1f$\pm$%.1f)' % (ave,std))
-    plt.imshow(data1, vmin=vmin, vmax=vmax, origin='lower', cmap='plasma')
+    # number of NaNs
+    nan_n = np.count_nonzero(np.isnan(dat))
     
-    ave,std = imstat(data2, 10,60, 100,250)
-    plt.subplot(1,2,2)
-    plt.title('after (%.1f$\pm$%.1f)' % (ave,std))
-    plt.imshow(data2, vmin=vmin, vmax=vmax, origin='lower', cmap='plasma')
+    # Separate noisy and normal pixels
+    noise_mask = np.where(msk == 1)
+    normal_mask = np.where(msk == 0)
+
+    # Separate noisy and normal pixels
+    # normal_mask = msk == 0
+    # noise_mask = msk == 1
+
+    # If there are no noisy or normal pixels, exit
+#    if len(noise_mask) == 0 or len(normal_mask) == 0:
+#       return
     
-    plt.colorbar(aspect=40, pad=0.08, orientation='vertical')
-    plt.show()
-    return()
+    if nan_n == 0:
+        return
 
+    print(f'FieldPeriNoiseReduction: {nan_n} pixels are processed.')
 
-# data[y][x] の (x1:x2,y1:y2) の領域の統計をとる
-def imstat(data, x1,x2, y1,y2):
-    n=0
-    Sx=0.
-    for y in range(y1-1, y2):
-        for x in range(x1-1, x2):
-            Sx += data[y][x]
-            n  += 1
-    ave = Sx/n
-
-    n=0
-    Sx=0.
-    Sxx=0.
-    for y in range(y1-1, y2):
-        for x in range(x1-1, x2):
-            Sx += data[y][x]
-            Sxx+= (data[y][x]-ave)*(data[y][x]-ave)
-            n  += 1
-    ave = Sx/n
-    std = np.sqrt(Sxx/n)
-    return(ave, std)
-
-# datax2の差分を表示する
-def fitsdsp_diff(data1,data2, vmin,vmax):
-    data_diff = data2 - data1
-    ave,std = imstat(data_diff, 10,60, 60,300)
-    plt.title('diff (%.1f$\pm$%.1f)' % (ave,std))
-    plt.imshow(data_diff, vmin=vmin, vmax=vmax, origin='lower', cmap='plasma')
-    plt.colorbar(aspect=40, pad=0.08, orientation='vertical')
-    plt.show()
-    return()
-'''
-
-# 自己相関関数をFFT
-def test_fft_compare(ss, filename, ext):
-    # 両側FFT
-    d1 = np.zeros(304*2)
-    for y in range(0,304):
-        d1[304-y] = ss[y]
-        d1[304+y] = ss[y]
-    yf1 = np.fft.fft(d1)/(304*2/2)
-    gx1 = np.linspace(0,1,304*2)
+    # Recalculate the data from the original image ←important
+    dat = image[0:yrange, :].copy()
     
-#    plt.figure(figsize=(8,3))
-##    plt.subplot(212)
-#    plt.ylim(-0.01,0.1)
-#    plt.xlim(-0.01,0.5)
-#    plt.title('power spectrum')
-#    plt.xlabel('frequency')
-#    plt.ylabel('power')
-#    plt.plot(gx1, np.abs(yf1), color = 'C0' if ext == '_L' or ext == '_R' else 'C3')
-#    
-#    plot_filename = os.path.join('plot/' + filename + ext + '.png')
-##    plot_filename = os.path.join('/Users/yamamura/Desktop/to_weka/IRCMap_doublestar/Qnoise/u_20230818/test/plot/' + filename + ext + '.png')
-##    print(plot_filename)
-#    plt.savefig(plot_filename, format='png', dpi=300, bbox_inches='tight', pad_inches=0.1)
-##    plt.show()
-#    plt.close()
+    # Calculate noise suppression factor
+    # Calculate standard deviations for normal and noise pixels
+    sg_normal = np.std(dat[normal_mask])
+    sg_noise = np.std(dat[noise_mask])
+
+    if sg_noise != 0:  # Avoid division by zero
+        suppression_factor = sg_normal / sg_noise
+        print(f"Suppress factor = {suppression_factor}")
+        # Suppress noise by scaling
+        dat[noise_mask] *= sg_normal / sg_noise
     
-    return(yf1,gx1)
+    # Update the image
+    image[0:yrange, :] = dat
+    # image[55:59, 0:250] = dat[55:59, :]    # only central component
 
-#moving averageと実際の関数の差からマスク位置を決定
-#def delta_m_ave_self_fft(gx,yf,side,snumber):
-def delta_m_ave_self_fft(gx,yf,side):
-    rolling_yf = bn.move_mean(np.abs(yf),window=25)
-    nan_roll = 0
-    for nan_roll in range(0,500):#(0,292)~(0,583)
-        rolling_yf[12+nan_roll] = rolling_yf[24+nan_roll]
-        
-    delta_rangel = 0.09
-    fity_selfFFT_std = np.zeros(304-math.floor(304*delta_rangel*2))
-    fity_selfFFT = np.zeros(608)
-    msk_range = np.zeros(608)
-    i = 0
+    return image, msk
+
+
+
+
+
+# High-pass filter (Gaussian-based)
+def hpfilter(image, ksize=3, siglim=3.0):
+    # Create a working copy of the input image
+    imw = image.copy()
+    # imw = np.copy(image)
     
-    for y in range(0,608):
-        if(gx[y]>delta_rangel and gx[y]<=0.5):
-            fity_selfFFT[y] = np.abs(yf[y]) - rolling_yf[y]
-            fity_selfFFT_std[i] = np.abs(yf[y]) - rolling_yf[y]
-            i += 1
+    # Initial threshold and mask bright spots
+    med = np.median(imw)
+    sig = np.nanstd(imw - med)
+    mask = np.abs(imw - med) > siglim * sig
+    # count = np.sum(mask)
+    count = np.count_nonzero(mask)
+    cnt_k = count
+    # print(f"High-pass filter: {count} pixels masked.")
 
-    std = statistics.stdev(fity_selfFFT_std)
+    while count > 0:
+        imw[mask] = np.nan
+        # imw[mask] = 0   ###
+#        ims = generic_filter(imw, np.nanmean, size=int(ksize), mode='constant', cval=np.nan)
+        # ims = gaussian_filter(np.nan_to_num(imw), sigma=ksize, mode='nearest')
+        # ims = nan_box2_filter(imw, width=ksize)
+        ims = nan_gaussian_filter(imw, sigma=ksize)
 
-    for y in range(0,608):
-        if fity_selfFFT[y] >= 3*std:
-            msk_range[y] = 1
- 
+        sig = np.nanstd(imw - ims)
+        # mask = np.abs(imw - ims) > siglim * sig
+        mask = (imw != 0) & (np.abs(imw - ims) > siglim * sig)
+        count = np.count_nonzero(mask)
+        # print(f"High-pass filter: {count} pixels masked.")
+        cnt_k += count
 
-    return(msk_range,std,rolling_yf)
+    print(f"\nHigh-pass filter: {cnt_k} pixels masked in total.")
+    # print(f'hpfilter: {cnt_k} pixels masked in total.')
+    
+    ## hpfilter 無視
+#    ims = np.zeros_like(im)
 
-#パワースペクトルと移動平均からマスクの範囲を決定
-def delta_PS_move_ave(gx,yf,rolling_yf,base_std, filename, ext):
-    delta_rangel = 0.09
-    fity_selfFFT_std = np.zeros(304-math.floor(304*delta_rangel*2))
-    fity_selfFFT = np.zeros(608)
-    msk_range = np.zeros(608)
-
-    for y in range(0,608):
-        if(gx[y]>delta_rangel and gx[y]<=0.5):
-            fity_selfFFT[y] = np.abs(yf[y]) - rolling_yf[y]
-
-    for y in range(0,608):
-        if fity_selfFFT[y] >= 5*base_std:
-            msk_range[y] = 1
-            if y >= 1:
-                msk_range[y-1] = 1
-            if y <= 606:
-                msk_range[y+1] = 1
-
-
-
-#    with open('diagram.txt', 'a') as f:
-#        print(gx, filename, np.abs(yf), sep='#', end='owari', file=f)
-#        f.write(gx, filename, np.abs(yf))
-
-
-#Left Right
-    if ext == '_L' :
-#        np.save('power_l.npy', np.abs(yf))
-        with open('diagram_l.txt', 'a') as f:
-            print(np.abs(yf).tolist(), file=f)
-#            np.save(f, np.abs(yf))
-
-        with open('diagram_l.csv', 'a') as f:
-            writer = csv.writer(f)
-            writer.writerow(np.abs(yf).tolist())
-
-    if ext == '_R' :
-#        np.save('power_r.npy', np.abs(yf))
-        with open('diagram_r.txt', 'a') as f:
-            print(np.abs(yf), file=f)
-#            np.save(f, np.abs(yf))
-
-        with open('diagram_r.csv', 'a') as f:
-            writer = csv.writer(f)
-            writer.writerow(np.abs(yf).tolist())
-
-#        print(np.abs(yf).tolist())
+    imh = image - ims
+    
+    return imh, ims
 
 
 
-# np.savez('power.npz', a=a, b=b)
+# despike - Spike removal
+# A simple despiking function that removes spikes from an image.
+def despiker(image, sigma=5):
+    """
+    A simple despiking function that removes spikes from an image.
+
+    Parameters:
+    image : 2D numpy array
+        The input image to be despiked.
+    sigma : float, optional
+        The Gaussian width in pixels for filling the spikes. Default is 5.
+
+    Returns:
+    image_despiked : 2D numpy array
+        The image after spikes have been removed and filled.
+    image_spikes : 2D numpy array
+        The image containing only the spikes that were removed.
+    """
+    imw = np.copy(image)
+    
+    while True:
+        ave = np.nanmean(imw)
+        sgm = np.nanstd(imw)
+
+        # replace spikes (outliers) with NaN
+        cond = np.abs(imw - ave) > sigma * sgm
+        cnt = np.count_nonzero(cond)
+        # cnt = np.sum(cond)
+        if cnt == 0:
+            break
+        # Mark spikes in the mask and set them to NaN in the data
+        imw[cond] = np.nan
+
+    # Fill NaNs using Gaussian smoothing
+    imw_filled = gauss_fill(imw, sigma)
+#    imw_filled = replace_nans(imw, sigma)
+
+    # The despiked image is the filled working image
+    image_despiked = imw_filled
+
+    # The spikes image is the difference between the original and the despiked image
+    image_spikes = image - image_despiked
+
+    return image_despiked, image_spikes
 
 
 
-#    plt.figure(figsize=(8,3))
-#    plt.xlim(-0.01,0.5)
-#    plt.ylim(-0.01,0.1)
-#    plt.plot(gx, np.abs(yf), label='power spectrum')
-#    plt.plot(gx,rolling_yf,label='moving average', alpha=0.7) 
-#    plt.title('power spectrum and moving average')
-#    plt.title('mask range')
-#    plt.xlabel('frequency')
-#    plt.ylabel('power')
-#    plt.plot(gx,msk_range, alpha=0.5)
-#    #plt.legend()
-#
-#    mask_filename = os.path.join('mask/' + filename + ext + '.png')
-#    plt.savefig(mask_filename, format='png', dpi=300, bbox_inches='tight', pad_inches=0.1)
-#    #plt.show()
-#    plt.close()
-            
-    return(msk_range)
+def tanzaku_noise_reduction(image, leftright, basename=None, outdir='./', verbose=False, no_hpf=False, no_despike=False):
+    """Perform noise reduction on a tanzaku image."""
+    start_time = time.process_time()
 
-# フーリエ変換の結果をプロットする
-def yf_plot(yf, x1,x2, mode, ext):
-    plt.xlim(1e-5,1.0-1e-5)
-    #plt.ylim(1,1e6)
-    if   mode == "abs":
-        for x in range(x1-1, x2):
-            plt.title("FFT of raw data")
-            plt.ylim(0,50)
-            #plt.plot(yf.gx*2, np.abs(yf.data[x-1]) * 10**(x-1))
-            #plt.plot(yf.gx*2, np.abs(yf.data[x-1]))
-            plt.plot(yf.gx*2, np.abs(yf.data[x-1]))
-        if(pltave):
-            plt.plot(yf.gx*2, np.abs(yf.ave) * 10**(x2-1))
-        #plt.xscale('log')
-        #plt.yscale('log')
-    elif mode == "real":
-        for x in range(x1-1, x2):
-            plt.plot(yf.gx*2, yf.data[x-1].real) # + 50*x)
-        if(pltave):
-            plt.plot(yf.gx*2, yf.ave.real) #  + 50*x2)
-        #plt.ylim(0,500)
-        plt.ylim(-50,50)        
-#        popt,pcov = fit_yfreal(yf.gx, yf.data[x-1].real)
-#        plt.plot(yf.gx, funcR(yf.gx, popt[0],popt[1],popt[2]))
-#        plt.plot(yf.gx, yf.data[x-1].real-funcR(yf.gx, popt[0],popt[1],popt[2]))
-    elif mode == "imag":
-        for x in range(x1-1, x2):
-            plt.plot(yf.gx*2, yf.data[x-1].imag)# + 40*x)
-            plt.ylim(-100,100)
-            #plt.ylim(-100,100)
-#            popt,pcov = fit_yfimag(yf.gx, yf.data[x-1].imag)
-#            plt.plot(yf.gx, yf.data[x-1].imag-funcI(yf.gx, popt[0],popt[1],popt[2],popt[3]))
-#            plt.plot(yf.gx, funcI(yf.gx, popt[0],popt[1],popt[2],popt[3]))
-            
-
-        if(pltave):
-            plt.plot(yf.gx*2, yf.ave.imag + 40*x2)
+    if basename is None:
+        verbose = False
+    if not os.path.exists(outdir):
+        os.makedirs(outdir)
+    
+    lr = '_L' if leftright == 'LEFT' else '_R' if leftright == 'RIGHT' else ''
+    if lr == '':
+        print('leftright should be LEFT or RIGHT.')
+        return
+    
+    # Extract target region
+    if leftright == "LEFT":
+        xran = np.array([0, 58]) + 6
+    elif leftright == "RIGHT":
+        xran = np.array([0, 58]) + 69
+    yran = np.array([0, 300]) + 3
+    im_target = image[yran[0]:yran[1], xran[0]:xran[1]]
+    
+    # High-pass filtering
+    if not no_hpf:
+        im_high, im_smth = hpfilter(im_target)
+        if verbose:
+#            save_fits(os.path.join(outdir, basename + '_hpf' + lr + '.fits'), [im_high, im_smth])
+            save_fits(os.path.join(outdir, basename + '_hpf' + lr + '.fits'), np.hstack([im_high, im_smth]))
+        im_target = im_high
     else:
-        print('No')
-    #プロット グラフ表示
-    #plt.title('FFT of raw data(masked)')
-    plt.xlabel('frequency')
-    plt.ylabel('power')
+        im_high = im_target
+        im_smth = np.zeros_like(im_target)
+    
+    # Despiking
+    if not no_despike:
+        im_dsp, im_spk = despiker(im_target)
+        if verbose:
+            # save_fits(os.path.join(outdir, basename + '_dsp' + lr + '.fits'), [im_dsp, im_spk])
+            save_fits(os.path.join(outdir, basename + '_dsp' + lr + '.fits'), np.hstack([im_dsp, im_spk]))
+        im_target = im_dsp
+    else: 
+        im_dsp = im_target
+        im_spk = np.zeros_like(im_target)
+    
+    # Get the image size
+    h, w = im_target.shape
 
-#    plt.savefig('ypplot' + ext + '.png')
-#    plt.show()
-    return()
+    # Mirror the data
+    # Create a new image that is 4 times the size by folding the original image with 1-pixel overlap
+    # Horizontally mirror
+    h_mirror = np.hstack((im_target, im_target[:, -1:], np.fliplr(im_target)))
+    # h_center = w // 2
+    # h_mirror = np.hstack((image[:, :h_center+1], np.fliplr(image[:, h_center-1:])))
 
- 
-####  main() ####
+    # and Vertically mirror
+    folded_image = np.vstack((h_mirror, h_mirror[-1, :], np.flipud(h_mirror)))
 
-def rmnoise(filename):
-    
-    time1 = time.time()
-#    elapsed_time = time1 - time0
-#    print(f"初期化時間：{elapsed_time}")
+    # v_center = h // 2
+    # folded_image = np.vstack((h_mirror[:v_center+1, :], np.flipud(h_mirror[v_center-1:, :])))
 
-#    args = sys.argv
-#    fitsname = args[1]
+    # im_target = folded_image
 
-    #fitsname = args[2]
-    #filename = fitsname.rstrip('.fits')
-    #fitsname_RS = fitsname.replace('_RS.fits','')
-    fitsname = filename + '.fits' # fitsname = '{}{}'.format(filename, '.fits')
-    fitsname_RS = filename + '_RS.fits'
+
+    # Mirror and copy the data (the way to obtain zero imaginary data when FFT)
+    im4 = np.zeros((h * 2, w * 2))
+
+    # im4[0:h, 0] = im_target[0:h, 0]
+    # im4[0, 0:w] = im_target[0, 0:w]
+    # im4[h:2*h, 0] = np.flip(im_target[0:h, 0], axis=0)
+    # im4[0, w:2*w] = np.flip(im_target[0, 0:w], axis=0)
+
+    im4[1:h+1, 1:w+1] = im_target
+    im4[h:2*h, 1:w+1] = np.flip(im_target, axis=0)
+    im4[1:h+1, w:2*w] = np.flip(im_target, axis=1)
+    im4[h:2*h, w:2*w] = np.flip(np.flip(im_target, axis=0), axis=1)
     
-    x1,x2 = (40,40) # サンプルとして表示する x(pixel) の範囲
-    offy  = 2       # スキップする y(sampling) の範囲
+    folded_image = im4
+
+    if verbose:
+        save_fits(os.path.join(outdir, basename + '_src' + lr + '.fits'), folded_image)
     
-    (data,header) = data_from_fits(fitsname) # FITSを読み込む
-    data0 = copy.deepcopy(data)
+
+    # Evaluate StdDev before processing
+#    ave, sgm = field_sigma(folded_image)
+#    print(f'Input image StdDev = {sgm}')
+
+    # Evaluate StdDev before processing
+    ave = np.nanmean(folded_image)
+    sgm = np.nanstd(folded_image)
+    print(f'Input image StdDev = {sgm}')
     
-    # FITSデータを加工する
-    # (data[y][x]→data[x][y]変換, 開始からoffy回分のsamplingを除く)
-    ycut = data_flip_xy(data, offy)
-    
-    #天体の情報を抜く（改良版）
-    # More than 3 times the median of the histogram of surface brightness is excluded from the mask level as a bright signal. # median multiplied by 3 or more
-    ycut, yescape = escape_star(ycut,data, 0,63, 0,304)
-    
-    
-    # FITSデータ(2次元配列)を1次元配列にする
-    ldata = np.zeros(58*ycut.ny)
-    for x in range(6, 64):
-        for y in range(0, ycut.ny):
-            ldata[(x-6)*ycut.ny+y] = ycut.data[x][y].real
-            
-    rdata = np.zeros(58*ycut.ny)
-    for x in range(69, ycut.nx):
-        for y in range(0, ycut.ny):
-            rdata[(x-69)*ycut.ny+y] = ycut.data[x][y].real
-    
-    #列の合間にダミーデータを入れる
-    lave = statistics.mean(ldata)
-    dummyl = 0
-    ldata2 = [lave]*58*ycut.ny*2
-    for x in range(6, 64):
-        for y in range(0, ycut.ny):
-            ldata2[(x-6)*ycut.ny+dummyl*ycut.ny+y] = ycut.data[x][y].real
-        dummyl += 1
-    
-    rave = statistics.mean(rdata)
-    dummyr = 0
-    rdata2 = [rave]*58*ycut.ny*2
-    for x in range(69, ycut.nx):
-        for y in range(0, ycut.ny):
-            rdata2[(x-69)*ycut.ny+dummyr*ycut.ny+y] = ycut.data[x][y].real
-        dummyr += 1
-    
-    lag_max = 304
-    
-    # 自己相関関数の計算 (既存のルーチン)
-    llist = pd.Series(ldata2)
-    llist.index = pd.Series(np.ndarray(58*ycut.ny*2))
-    lss = sm.tsa.stattools.acf(llist, nlags=lag_max, missing='conservative')
-    
-    # (テスト) FFT2種類の方法の比較
-    #test_fft_compare(ss)
-    yfl1,gxl1 = test_fft_compare(lss, filename, "_L")
-    N_yfl = len(yfl1)
-    yfl = np.zeros(N_yfl)
-    for y in range(0,608):
-        yfl[y] = np.abs(yfl1[y])
-    
-    #moving averageと実際の関数の差からマスク位置を決定
-    #msk_rangel1,stdl1,rolling_yfl1 = delta_m_ave_self_fft(gxl1,yfl1,'left','_l1')
-    msk_rangel1,stdl1,rolling_yfl1 = delta_m_ave_self_fft(gxl1,yfl1,'left')
-    
-    #パワースペクトルにマスクをかけてスムージング
-    #yfl2 = rm_noise_PS(gxl1,yfl1,rolling_yfl1,msk_rangel1,'_l1')
-    yfl2 = rm_noise_PS(yfl1,msk_rangel1)
-    
-    #パワースペクトルにマスクをかけてスムージング
-    #msk_rangel2,stdl2,rolling_yfl2 = delta_m_ave_self_fft(gxl1,yfl2,'left','_l2')
-    msk_rangel2,stdl2,rolling_yfl2 = delta_m_ave_self_fft(gxl1,yfl2,'left')
-    #yfl3 = rm_noise_PS(gxl1,yfl2,rolling_yfl2,msk_rangel2,'_l2')
-    yfl3 = rm_noise_PS(yfl2,msk_rangel2)
-    
-    #moving averageと実際の関数の差からマスク位置を決定
-    #msk_rangel3,stdl3,rolling_yfl3 = delta_m_ave_self_fft(gxl1,yfl3,'left','_l3')
-    msk_rangel3,stdl3,rolling_yfl3 = delta_m_ave_self_fft(gxl1,yfl3,'left')
-    
-    #２行目の自己相関関数
-    rlist = pd.Series(rdata2)
-    rlist.index = pd.Series(np.ndarray(58*ycut.ny*2))
-    rss = sm.tsa.stattools.acf(rlist, nlags=lag_max, missing='conservative')
-    
-    yfr1,gxr1 = test_fft_compare(rss, filename, "_R")
-    N_yfr = len(yfr1)
-    yfr = np.zeros(N_yfr)
-    for y in range(0,608):
-        yfr[y] = np.abs(yfr1[y])
+    # Perform 2D FFT
+    fft_image = fftshift(fft2(folded_image))
+    #  check if imaginary is small
+    print(f'Total imaginary component (prc) is {np.sum(np.abs(np.imag(fft_image)))}')
     
     
+    # abs, real, imaginary components of Fourier transformed image (3 dimension)
+    if verbose:
+        oim = np.stack([np.abs(fft_image), np.abs(np.real(fft_image)), np.abs(np.imag(fft_image))], axis=0)
+#        oim = np.zeros((h*2, w*2, 3))
+        # oim = np.zeros((fft_image.shape[0], fft_image.shape[1], 3), dtype=np.float64)
+#        oim[:, :, 0] = np.abs(fft_image)
+#        oim[:, :, 1] = np.abs(np.real(fft_image))
+        # oim[:, :, 2] = np.real(fft_image)
+#        oim[:, :, 2] = np.abs(np.imag(fft_image))
+        # oim[:, :, 2] = np.imag(fft_image)
+        save_fits(os.path.join(outdir, basename + '_fft' + lr + '.fits'), oim)
     
-    #moving averageと実際の関数の差からマスク位置を決定
-    #msk_ranger1,stdr1,rolling_yfr1 = delta_m_ave_self_fft(gxr1,yfr1,'right','_r1')
-    msk_ranger1,stdr1,rolling_yfr1 = delta_m_ave_self_fft(gxr1,yfr1,'right')
+
+    # Extract the central portion in Fourier space corresponding to the original image's frequency content
+    # Extract the center part of the Fourier transformed image (original image's size)
+    # Masking noise area
+
+    # Extract the left top region in Fourier space (original image's size)
+    # fft_image_o = fft_image[:h, :w]
+    fft_image_o = fft_image[0:h+1, 0:w+1]
+    # Apply a noise reduction filter     
+    real_fft = np.real(fft_image_o)
+    fft_masked, mask_area = field_peri_noise_reduction(real_fft)
+
+
+    if verbose:
+        save_fits(os.path.join(outdir, basename + '_fftm' + lr + '.fits'), np.abs(fft_masked))
+        save_fits(os.path.join(outdir, basename + '_msk' + lr + '.fits'), np.abs(mask_area))
     
-    #パワースペクトルにマスクをかけてスムージング
-    #yfr2 = rm_noise_PS(gxr1,yfr1,rolling_yfr1,msk_ranger1,'_r1')
-    yfr2 = rm_noise_PS(yfr1,msk_ranger1)
+
+    # Refold the masked Fourier image (with 1-pixel overlap)
+    # Horizontally mirror (with 1-pixel overlap)
+    h_mirror_masked = np.hstack((fft_masked, fft_masked[:, -1:], np.fliplr(fft_masked)))
+    # Vertically mirror
+    folded_fft_masked = np.vstack((h_mirror_masked, h_mirror_masked[-1, :], np.flipud(h_mirror_masked)))
+
+
+    # Mirror updated far to fa
+    fa4 = np.zeros((h * 2, w * 2))
+#    fa4 = np.real(folded_image)
+    # fa4 = np.zeros(folded_image)
     
-    #パワースペクトルにマスクをかけてスムージング
-    #msk_ranger2,stdr2,rolling_yfr2 = delta_m_ave_self_fft(gxr1,yfr2,'right','_r2')
-    msk_ranger2,stdr2,rolling_yfr2 = delta_m_ave_self_fft(gxr1,yfr2,'right')
-    #yfr3 = rm_noise_PS(gxr1,yfr2,rolling_yfr2,msk_ranger2,'_r2')
-    yfr3 = rm_noise_PS(yfr2,msk_ranger2)
+    # fa4[0:h, 0] = fft_masked[0:h, 0]
+    # fa4[0, 0:w] = fft_masked[0, 0:w]
+    # fa4[h:2*h, 0] = np.flip(fft_masked[0:h, 0], axis=0)
+    # fa4[0, w:2*w] = np.flip(fft_masked[0, 0:w], axis=0)
+
+    fa4[1:h+1, 1:w+1]   = fft_masked[1:h+1, 1:w+1]
+    fa4[h:2*h, 1:w+1] = np.flip(fft_masked[1:h+1, 1:w+1], axis=0)
+    fa4[1:h+1, w:2*w] = np.flip(fft_masked[1:h+1, 1:w+1], axis=1)
+    fa4[h:2*h, w:2*w] = np.flip(np.flip(fft_masked[1:h+1, 1:w+1], axis=0), axis=1)
+
+    folded_fft_masked = fa4
+
+    if verbose:
+        save_fits(os.path.join(outdir, basename + '_fa4' + lr + '.fits'), np.abs(folded_fft_masked))
     
-    #moving averageと実際の関数の差からマスク位置を決定
-    #msk_ranger3,stdr3,rolling_yfr3 = delta_m_ave_self_fft(gxr1,yfr3,'right','_r3')
-    msk_ranger3,stdr3,rolling_yfr3 = delta_m_ave_self_fft(gxr1,yfr3,'right')
-    
-    #moving averageと実際の関数の差からマスク位置を決定(正確)
-    mask_rangel = delta_PS_move_ave(gxl1,yfl,rolling_yfl3,stdl3,filename,'_L')
-    mask_ranger = delta_PS_move_ave(gxr1,yfr,rolling_yfr3,stdr3,filename,'_R')
-    
-    
-    #FFTをかける
-    yf = ycut_fft(ycut, 1,ycut.nx)
-    
-    yf_plot(yf, x1,x2, "abs", "_b")
-    
-    #自動で決定した範囲のノイズを除去
-    #rm_noise_left_6data(yf,mask_rangel)
-    #rm_noise_right_6data(yf,mask_ranger)
-    rm_noise_6data(yf,mask_rangel,0,64)
-    rm_noise_6data(yf,mask_ranger,64,yf.nx)
-    
-    yf_plot(yf, x1,x2, "abs", "_a")     # x1,x2で指定した範囲を1列ずつFFTして表示
-    
-    # inverse FFTをかける
-    ycut = yf_ifft(yf, 1,yf.nx)
+    # Set imaginary to zero
+    folded_fft_masked = folded_fft_masked + 1j * np.zeros_like(folded_fft_masked)
+    # folded_fft_masked = np.complex128(folded_fft_masked)
+
+    # Perform inverse Fourier Transform
+    # Inverse shift the zero frequency back
+    ifft_shifted = ifftshift(folded_fft_masked)
+
+    # Inverse Fourier Transform to recover the image
+    reconstructed_image = np.real(ifft2(ifft_shifted))
+    # reconstructed_image = ifft2(ifft_shifted)
+    print(f'Total imaginary component (inverse FFT) is {np.sum(np.abs(np.imag(reconstructed_image)))}')
+    # reconstructed_image = np.real(reconstructed_image)
+    im_difference = reconstructed_image - folded_image
+
+    if verbose:
+        save_fits(os.path.join(outdir, basename + '_rev' + lr + '.fits'), reconstructed_image)
+        save_fits(os.path.join(outdir, basename + '_dif' + lr + '.fits'), im_difference)
     
     
-    #天体の情報を元に戻す（オリジナル）
-    ycut = return_star(ycut,yescape)
+    # Evaluate StdDev after processing
+#    ave, sgm = field_sigma(reconstructed_image)
+#    print(f'Output image StdDev = {sgm}')
+
+    # Evaluate StdDev after processing
+    ave = np.nanmean(reconstructed_image)
+    sgm = np.nanstd(reconstructed_image)
+    print(f'Output image StdDev = {sgm}')
     
+    # Cut to original size
+    reconstructed_image_o = reconstructed_image[1:h+1, 1:w+1]
+
+    # Recover removed smooth component and spikes
+    reconstructed_image_o += im_spk + im_smth
     
-    # 処理後のデータのFFTプロット
-    # FITSデータ(2次元配列)を1次元配列にする
-    ldata = np.zeros(58*ycut.ny)
-    for x in range(6, 64):
-        for y in range(0, ycut.ny):
-            ldata[(x-6)*ycut.ny+y] = ycut.data[x][y].real
-            
-    rdata = np.zeros(58*ycut.ny)
-    for x in range(69, ycut.nx):
-        for y in range(0, ycut.ny):
-            rdata[(x-69)*ycut.ny+y] = ycut.data[x][y].real
-    
-    #列の合間にダミーデータを入れる
-    lave = statistics.mean(ldata)
-    dummyl = 0
-    ldata2 = [lave]*58*ycut.ny*2
-    for x in range(6, 64):
-        for y in range(0, ycut.ny):
-            ldata2[(x-6)*ycut.ny+dummyl*ycut.ny+y] = ycut.data[x][y].real
-        dummyl += 1
-    
-    rave = statistics.mean(rdata)
-    dummyr = 0
-    rdata2 = [rave]*58*ycut.ny*2
-    for x in range(69, ycut.nx):
-        for y in range(0, ycut.ny):
-            rdata2[(x-69)*ycut.ny+dummyr*ycut.ny+y] = ycut.data[x][y].real
-        dummyr += 1
-    
-    lag_max = 304
-    
-    llist = pd.Series(ldata2)
-    llist.index = pd.Series(np.ndarray(58*ycut.ny*2))
-    lss = sm.tsa.stattools.acf(llist, nlags=lag_max, missing='conservative')
-    yfl1,gxl1 = test_fft_compare(lss, filename, "_LA")
-    
-    rlist = pd.Series(rdata2)
-    rlist.index = pd.Series(np.ndarray(58*ycut.ny*2))
-    rss = sm.tsa.stattools.acf(rlist, nlags=lag_max, missing='conservative')
-    yfr1,gxr1 = test_fft_compare(rss, filename, "_RA")
-    
-    #天体の情報を元に戻す（2024/04/26）
-    #ycut = return_star(ycut,yescape)
-    
-    # データをXY-flipしてFITSに戻す
-    data_rflip_xy_save(ycut, data, header, offy, filename)
-    #data_rflip_xy(ycut, data, offy)
-        
-    
-    # FITSを表示
-    #fitsdsp_comp(data0, data, -10,250)
-    #fitsdsp_diff(data0, data, -10,10)
-    
-    time2 = time.time()
-    elapsed_time = time2-time1
+    # Write back to the original image; tanzakudata
+    image[yran[0]:yran[1], xran[0]:xran[1]] = reconstructed_image_o
+
+
+    # 時間計測
+    end_time = time.process_time()
+    elapsed_time = end_time - start_time
     print(f"経過時間：{elapsed_time}")
+
+    return
+
+
+
+# Helper function to save a numpy array as a FITS file
+def save_fits(filepath, data):
+    if isinstance(data, list):
+        header=fits.Header()
+        hdu = fits.ImageHDU(data)
+        hdul = fits.HDUList([fits.PrimaryHDU(header=header), hdu])
+#        hdul = fits.HDUList([fits.PrimaryHDU(d) for d in data])
+    else:
+        hdul = fits.HDUList([fits.PrimaryHDU(data)])
+    hdul.writeto(filepath, overwrite=True)
+
+
+
+# Main routine
+
+def tanzakurmnoise2d(file, leftonly=False, rightonly=False, outdir='./', verbose=False, nodespike=False, nohpf=False, raw=False):
+    """Perform noise reduction and processing on a tanzaku image."""
+    start_time = time.process_time()
+
+    if 'outdir' not in locals():
+        outdir = './'
+
+    basename = os.path.basename(file).replace('.fits.gz', '').replace('.fits', '')
+
+    if basename is None:
+        verbose = False
+    if not os.path.exists(outdir):
+        os.makedirs(outdir)
     
-    return()
+    if not os.path.exists(file):
+        print(f"{file} not found.")
+        return
+
+#    if not os.path.isfile(file):
+#        print(f"{file} not found.")
+#        return
+
+    
+    # Read the input tanzaku data
+    im0, hd0 = read_fits(file)
+    im0 = im0.astype(np.float64)
+
+    # Extract NAXIS1 and NAXIS2 from header
+    nx = hd0['NAXIS1']
+    ny = hd0['NAXIS2']
+    
+    # Perform differentiation
+    if raw:
+#    if 'raw' in locals() and raw:
+        im0[:, 0] = 0
+        imd = im0 - np.roll(im0, shift=-1, axis=1)
+        imd[:, 0:2] = 0
+    else:
+        imd = im0.copy()
+
+    imd_org = imd.copy()
+    
+    
+    # Setting flags
+#    verbose = 1 if 'verbose' in locals() and verbose else 0
+#    nohpf = 1 if 'nohpf' in locals() and nohpf else 0
+#    nodespike = 1 if 'nodespike' in locals() and nodespike else 0
+    
+    # Apply noise reduction for LEFT and RIGHT if applicable
+#    if 'rightonly' not in locals():
+    if not rightonly:
+        tanzaku_noise_reduction(imd, 'LEFT', basename=basename, outdir=outdir, verbose=verbose, no_hpf=nohpf, no_despike=nodespike)
+#    if 'leftonly' not in locals():
+    if not leftonly:
+        tanzaku_noise_reduction(imd, 'RIGHT', basename=basename, outdir=outdir, verbose=verbose, no_hpf=nohpf, no_despike=nodespike)
+
+    # Integrating to reconstruct the original form
+    if raw:
+#    if 'raw' in locals() and raw:
+        imd[:, 0] = 0
+        imi = np.cumsum(imd, axis=1)
+        imo = imi.copy()
+    else:
+        imo = imd.copy()
+
+    if not verbose:
+        # Writing output data
+        fout = os.path.join(outdir, basename + '.fits')
+        fits.writeto(fout, imo, hd0, overwrite=True)
+
+
+    if verbose:
+
+        # Writing output data
+        fout = os.path.join(outdir, basename + '_pnr.fits')
+        fits.writeto(fout, imo, hd0, overwrite=True)
+        
+        # Writing differential data
+        ftdf = os.path.join(outdir, basename + '_tdf.fits')
+        fits.writeto(ftdf, imd - imd_org, hd0, overwrite=True)
+
+
+    return
+    
+    
+# Example usage:
+# tanzakurmnoise2d('example.fits', leftonly=False, rightonly=False, outdir='./output', verbose=True, nodespike=False, nohpf=False, raw=False)
+
+# tanzakurmnoise2d('F0400895463_4NS.fits', leftonly=False, rightonly=False, outdir='./output/', verbose=True, nodespike=True, nohpf=True, raw=True)
+
+# tanzakurmnoise2d('F0436844853_4NS.fits', leftonly=False, rightonly=False, outdir='./output', verbose=True, nodespike=False, nohpf=False, raw=False)
+
+# Cen Aを含む
+# tanzakurmnoise2d('F0439699725_4NS.fits', leftonly=False, rightonly=False, outdir='./output', verbose=True, nodespike=False, nohpf=False, raw=False)
+tanzakurmnoise2d('F0439699725_4NS.fits', leftonly=False, rightonly=False, outdir='./output', verbose=False, nodespike=False, nohpf=False, raw=False)
+
+# 暗い 星の少ない領域
+# tanzakurmnoise2d('F0977264488_4NS.fits', leftonly=False, rightonly=False, outdir='./output', verbose=True, nodespike=False, nohpf=False, raw=False)
+
+# 星が1つ
+# tanzakurmnoise2d('F1413796139_4NS.fits', leftonly=False, rightonly=False, outdir='./output', verbose=True, nodespike=False, nohpf=False, raw=False)
+
+# 明るい領域
+# tanzakurmnoise2d('F0246884289_4NS.fits', leftonly=False, rightonly=False, outdir='./output', verbose=True, nodespike=False, nohpf=False, raw=False)
+
+
+'''
+'''
+
+# 明るい
+# tanzakurmnoise2d('F0541153248_4NS.fits', leftonly=False, rightonly=False, outdir='./output', verbose=True, nodespike=False, nohpf=False, raw=False)
+# tanzakurmnoise2d('F1035614886_4NS.fits', leftonly=False, rightonly=False, outdir='./output', verbose=True, nodespike=False, nohpf=False, raw=False)
+
+# 星少し
+# tanzakurmnoise2d('F0473757261_4NS.fits', leftonly=False, rightonly=False, outdir='./output', verbose=True, nodespike=False, nohpf=False, raw=False)
+# tanzakurmnoise2d('F0246884289_4NS.fits', leftonly=False, rightonly=False, outdir='./output', verbose=True, nodespike=False, nohpf=False, raw=False)
+
+# 暗い
+# tanzakurmnoise2d('F0668634023_4NS.fits', leftonly=False, rightonly=False, outdir='./output', verbose=True, nodespike=False, nohpf=False, raw=False)
+
+
 
 
 def rmnoise_list(fits_list_path):    
     input_files = read_fits_list(fits_list_path)
     for f in input_files:
-        rmnoise(f)
-
-fits_list_path = sys.argv[1]
-rmnoise_list(fits_list_path)
-
+        file = f + '.fits'
+        tanzakurmnoise2d(file, leftonly=False, rightonly=False, outdir='./output', verbose=False, nodespike=False, nohpf=False, raw=False)
+        # tanzakurmnoise2d(file, leftonly=False, rightonly=False, outdir='./output', verbose=True, nodespike=False, nohpf=False, raw=False)
 
 
 
 
+if __name__ == "__main__":
+    fits_list_path = sys.argv[1]
+    rmnoise_list(fits_list_path)
 
 
-# pt diagram
+
+
