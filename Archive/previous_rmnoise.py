@@ -88,9 +88,9 @@ def replace_nans(image, stddev):
 
         while iteration < max_iterations:
             kernel = Gaussian2DKernel(stddev, stddev)
-            scipy_conv = scipy_convolve(image, kernel, mode='same', method='direct')
-            scipy_conv_zerod = scipy_convolve(img_zerod, kernel, mode='same', method='direct')
-            astropy_conv = convolve(image, kernel)
+            # scipy_conv = scipy_convolve(image, kernel, mode='same', method='direct')
+            # scipy_conv_zerod = scipy_convolve(img_zerod, kernel, mode='same', method='direct')
+            # astropy_conv = convolve(image, kernel)
             image = interpolate_replace_nans(image, kernel)
 
             if np.isnan(image).sum() == 0:
@@ -361,8 +361,9 @@ def hpfilter(im, ksize=3.0, siglim=3.0):
     while len(idx[0]) > 0:
 #    while count > 0:
         imw[idx] = np.nan
-#        ims = uniform_filter(np.nan_to_num(imw), size=int(ksize))
-        ims = gaussian_filter(np.nan_to_num(imw), sigma=ksize, mode='nearest')
+        # ims = uniform_filter(np.nan_to_num(imw), size=int(ksize))
+        ims = uniform_filter(np.nan_to_num(imw), size=int(ksize))
+#        ims = gaussian_filter(np.nan_to_num(imw), sigma=ksize, mode='nearest')
         sig = np.nanstd(imw - ims)
         idx = np.where(np.abs(imw - ims) > siglim * sig)
         cnt_k += len(idx[0])
@@ -606,8 +607,8 @@ def despiker3(image, sigma=5):
             break
 
     # Fill NaNs using Gaussian smoothing
-    imw_filled = replace_nans(imw, sigma)
-#    imw_filled = gauss_fill(imw, sigma)
+#    imw_filled = replace_nans(imw, sigma)
+    imw_filled = gauss_fill(imw, sigma)
 #    imw_filled = gaussian_filter(imw, sigma=sigma, mode='nearest')
 
     # The despiked image is the filled working image
@@ -645,7 +646,10 @@ def tanzaku_noise_reduction(image, leftright, basename=None, outdir='./', verbos
     if not no_hpf:
         im_high, im_smth = hpfilter(im_target)
         if verbose and basename:
-            save_fits(os.path.join(outdir, basename + '_hpf' + lr + '.fits'), [im_high, im_smth])
+            im_save = im_high.copy()
+#            save_fits(os.path.join(outdir, basename + '_hpf' + lr + '.fits'), [im_high, im_smth])
+#            save_fits(os.path.join(outdir, basename + '_hpf' + lr + '.fits'), im_save.extend(im_smth))
+            save_fits(os.path.join(outdir, basename + '_hpf' + lr + '.fits'), np.hstack([im_high, im_smth]))
         im_target = im_high
     else:
         im_high = im_target
@@ -656,6 +660,7 @@ def tanzaku_noise_reduction(image, leftright, basename=None, outdir='./', verbos
         im_dsp, im_spk = despiker3(im_target)
         if verbose and basename:
             save_fits(os.path.join(outdir, basename + '_dsp' + lr + '.fits'), [im_dsp, im_spk])
+            save_fits(os.path.join(outdir, basename + '_dsp' + lr + '.fits'), np.hstack([im_dsp, im_spk]))
         im_target = im_dsp
     else:
         im_dsp = np.zeros_like(im_target)
@@ -842,10 +847,10 @@ def tanzakurmnoise2d(file, leftonly=False, rightonly=False, outdir='./', verbose
 # tanzakurmnoise2d('F0436844853_4NS.fits', leftonly=False, rightonly=False, outdir='./output', verbose=True, nodespike=False, nohpf=False, raw=False)
 
 # 暗い 星の少ない領域
-# tanzakurmnoise2d('F0977264488_4NS.fits', leftonly=False, rightonly=False, outdir='./output', verbose=True, nodespike=False, nohpf=False, raw=False)
+tanzakurmnoise2d('F0977264488_4NS.fits', leftonly=False, rightonly=False, outdir='./output', verbose=True, nodespike=False, nohpf=False, raw=False)
 
 # 星が1つ
-# tanzakurmnoise2d('F1413796139_4NS.fits', leftonly=False, rightonly=False, outdir='./output', verbose=True, nodespike=False, nohpf=False, raw=False)
+tanzakurmnoise2d('F1413796139_4NS.fits', leftonly=False, rightonly=False, outdir='./output', verbose=True, nodespike=False, nohpf=False, raw=False)
 
 # 明るい領域
 tanzakurmnoise2d('F0246884289_4NS.fits', leftonly=False, rightonly=False, outdir='./output', verbose=True, nodespike=False, nohpf=False, raw=False)
