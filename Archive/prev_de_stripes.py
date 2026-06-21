@@ -2,11 +2,23 @@ import sys
 import os
 import numpy as np
 import matplotlib.pyplot as plt
+import seaborn as sns
+import pandas as pd
+import csv
 from astropy.io import fits
 from astropy.stats import sigma_clip
 from astropy.convolution import convolve, Gaussian2DKernel, interpolate_replace_nans
 # from multiprocessing import Pool
 import time
+
+
+#mpl.style.use('seaborn-darkgrid')
+# plt.style.use("seaborn-v0_8")
+# plt.style.use('seaborn-darkgrid')
+# plt.style.use('seaborn-whitegrid')
+sns.set(font='IPAexGothic')
+sns.set_style("whitegrid")
+# sns.set_style("darkgrid")
 
 
 def read_fits_list(fits_list_path):
@@ -92,12 +104,24 @@ def sigma_clipping2(images, sigma=5.0, threshold=5.0, max_iterations=10):
     return mean_clipped_image
 
 
-def save_profile(profile_x, season, outdir='./profile_ave'):
+def save_profile(profile_x, season, outdir='./profile_ave_csv'):
     os.makedirs(outdir, exist_ok=True)
     filename = os.path.basename(season).replace('.txt', '')
 
-    profile_filename = os.path.join('profile_ave', f'{filename}.txt')
-    np.savetxt(filename, profile_x)
+    profile_filename = os.path.join('profile_ave_csv', f'{filename}.csv')
+    # np.savetxt(profile_filename, profile_x)
+    np.savetxt('./profile_ave_csv/1st_season.csv', profile_x, delimiter=',')
+
+
+
+def save_profile_diff(profile_x, season, outdir='./profile_ave_csv'):
+    os.makedirs(outdir, exist_ok=True)
+    filename = os.path.basename(season).replace('.txt', '_d')
+
+    profile_filename = os.path.join('profile_ave_csv', f'{filename}.csv')
+    # np.savetxt(profile_filename, profile_x)
+    np.savetxt('./profile_ave_csv/1st_season.csv', profile_x, delimiter=',')
+
 
 
 def plot_profile(profile_x, season, outdir='./profile_ave'):
@@ -105,18 +129,43 @@ def plot_profile(profile_x, season, outdir='./profile_ave'):
     filename = os.path.basename(season).replace('.txt', '')
 
     plt.figure(figsize=(12, 6))
-    plt.plot(profile_x, label='Average Profile', color='b', alpha=0.7)
+    plt.plot(profile_x, label='1st season', color='C0', alpha=0.7)
     # plt.plot(median_profile, label='Median Profile', color='r', alpha=0.7)
     # plt.ylim(-16.2, 7)
     # plt.ylim(0, 225)
+    # plt.ylim(-34, 11) # average, each 2 rows
     plt.xlabel('Pixel (X-direction)')
-    plt.ylabel('Profile Value')
+    plt.ylabel('Power')
     plt.title('Average Profiles')
     # plt.title('Median Profiles of FITS Image (Y-Integrated)')
     # plt.legend()
-    plt.grid()
+    plt.grid(True)
+    plt.tight_layout()
+    plot_filename = os.path.join(outdir, f'{filename}.png')
+    plt.savefig(plot_filename, format='png', dpi=150, bbox_inches='tight', pad_inches=0.1)
+    #plt.show()
+    plt.close()
 
-    plot_filename = os.path.join('profile_ave', f'{filename}.png')
+
+
+def plot_profile_diff(profile_x, season, outdir='./profile_ave_diff'):
+    os.makedirs(outdir, exist_ok=True)
+    filename = os.path.basename(season).replace('.txt', '')
+
+    plt.figure(figsize=(12, 6))
+    plt.plot(profile_x, label='1st season', color='C0', alpha=0.7)
+    # plt.plot(median_profile, label='Median Profile', color='r', alpha=0.7)
+    # plt.ylim(-16.2, 7)
+    # plt.ylim(0, 225)
+    plt.ylim(-34, 11) # average, each 2 rows
+    plt.xlabel('Pixel (X-direction)')
+    plt.ylabel('Power')
+    plt.title('Average Profiles')
+    # plt.title('Median Profiles of FITS Image (Y-Integrated)')
+    # plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plot_filename = os.path.join(outdir, f'{filename}.png')
     plt.savefig(plot_filename, format='png', dpi=150, bbox_inches='tight', pad_inches=0.1)
     #plt.show()
     plt.close()
@@ -190,10 +239,10 @@ def de_stripes_outer(fits_files, season):
     profile_x = np.mean(mean_image_cropped, axis=0)
 
     save_profile(profile_x, season)
-    plot_profile(profile_x, season)
+    plot_profile(profile_x, season, outdir='./profile_ave')
 
 
-    """
+    
     # Normalize and prepare the pattern image
     x_range1, x_range2 = (6, 63), (69, 126)
     mean_val1 = np.mean(profile_x[x_range1[0]:x_range1[1] + 1])
@@ -202,11 +251,14 @@ def de_stripes_outer(fits_files, season):
     profile_diff[x_range1[0]:x_range1[1] + 1] = profile_x[x_range1[0]:x_range1[1] + 1] - mean_val1
     profile_diff[x_range2[0]:x_range2[1] + 1] = profile_x[x_range2[0]:x_range2[1] + 1] - mean_val2
 
-    # Create a 2D pattern image based on the 1D profile difference
-    pattern_image = np.tile(profile_diff, (mean_image.shape[0], 1))
-    save_fits(pattern_image, 'pattern_image')
-    """
+    save_profile_diff(profile_diff, season)
+    plot_profile_diff(profile_diff, season, outdir='./profile_ave_diff')
 
+    # Create a 2D pattern image based on the 1D profile difference
+    # pattern_image_d = np.tile(profile_diff, (mean_image.shape[0], 1))
+    # save_fits(pattern_image_d, 'pattern_image_diff')
+    
+    """
     # Compute the difference in specified X ranges and normalize
     x_range1, x_range2 = (6, 63), (69, 126)
     mean_val1 = np.mean(profile_x[x_range1[0]:x_range1[1] + 1])
@@ -222,7 +274,7 @@ def de_stripes_outer(fits_files, season):
     profile_section = np.zeros_like(profile_x)
     profile_section[x_range1[0]:x_range1[1]+1] = profile_x[x_range1[0]:x_range1[1]+1]
     profile_section[x_range2[0]:x_range2[1]+1] = profile_x[x_range2[0]:x_range2[1]+1]
-
+    """
 
     # Create a 2D pattern image based on the 1D profile difference
     # pattern_image = np.tile(profile_diff, (stacked_image.shape[0], 1))
