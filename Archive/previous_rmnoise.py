@@ -2,6 +2,7 @@ import os
 import sys
 import numpy as np
 from scipy.fft import fft2, ifft2, fftshift, ifftshift
+import pyfftw.interfaces.scipy_fft as fft
 from scipy.ndimage import uniform_filter, generic_filter, gaussian_filter
 from scipy import stats
 from astropy.io import fits
@@ -10,7 +11,7 @@ from astropy.convolution import convolve, Gaussian2DKernel, Box2DKernel, interpo
 import matplotlib.pyplot as plt
 import logging
 from dataclasses import dataclass
-from typing import Callable, Tuple, Dict
+from typing import Tuple
 import time
 
 
@@ -837,7 +838,7 @@ def tanzaku_noise_reduction(image, side, basename, config, io):
         # im_high, im_smth = hpfilter(im_target)
         im_target, im_smth = hpfilter2(im_target)
         if verbose:
-            save_fits(os.path.join(outdir, basename + '_hpf' + lr + '.fits'), [im_target, im_smth])
+            save_fits(os.path.join(io.outdir, basename + '_hpf' + lr + '.fits'), [im_target, im_smth])
             # save_fits(os.path.join(io.outdir, basename + '_hpf' + lr + '.fits'), np.hstack([im_target, im_smth]))
     else:
         im_smth = np.zeros_like(im_target)
@@ -849,7 +850,7 @@ def tanzaku_noise_reduction(image, side, basename, config, io):
     if not io.no_despike:
         im_target, im_spk = despiker(im_target)
         if verbose:
-            save_fits(os.path.join(outdir, basename + '_dsp' + lr + '.fits'), [im_target, im_spk])
+            save_fits(os.path.join(io.outdir, basename + '_dsp' + lr + '.fits'), [im_target, im_spk])
             # save_fits(os.path.join(io.outdir, basename + '_dsp' + lr + '.fits'), np.hstack([im_target, im_spk]))
     else: 
         im_spk = np.zeros_like(im_target)
@@ -874,6 +875,7 @@ def tanzaku_noise_reduction(image, side, basename, config, io):
     # ------------------------------
     # Perform 2D FFT
     fft_image = fft2(folded_image, workers=-1)
+    # fft_image = fft.fft2(folded_image, workers=-1)
     if config.use_fftshift:
         fft_image = fftshift(fft_image)
 
@@ -941,7 +943,8 @@ def tanzaku_noise_reduction(image, side, basename, config, io):
     # reconstructed_image = ifft2(folded_fft_masked)
     # logger.info('Total imaginary component (inverse FFT) is %s', np.sum(np.abs(np.imag(reconstructed_image))))
     # reconstructed_image = np.real(reconstructed_image)
-    reconstructed_image = np.real(ifft2(folded_fft_masked))
+    reconstructed_image = np.real(ifft2(folded_fft_masked, workers=-1))
+    # reconstructed_image = np.real(fft.ifft2(folded_fft_masked, workers=-1))
 
     '''
     logger.info("DEBUG reconstructed_image")
@@ -1007,7 +1010,7 @@ def tanzaku_rmnoise_2d(file, config, io):
     # Read FITS
     # Read the input tanzaku data
     im0, hd0 = read_fits(file)
-    im0 = im0.astype(np.float64)
+    im0 = im0.astype(np.float32)
 
     # Extract NAXIS1 and NAXIS2 from header
     # nx = hd0['NAXIS1']
@@ -1066,16 +1069,23 @@ def tanzaku_rmnoise_2d(file, config, io):
 def rmnoise_list(fits_list_path):    
     """ Batch processing. """
     input_files = read_fits_list(fits_list_path)
+    
+    # Initialize configs
+    config = NoiseReductionConfig()
+    io = IOConfig()
+
     for f in input_files:
         file = f + '.fits'
-        tanzaku_rmnoise_2d(file, config = NoiseReductionConfig(), io = IOConfig())
+        tanzaku_rmnoise_2d(file, config = config, io = io)
 
+def main():
+    try:
+        fits_list_path = sys.argv[1]
+    except IndexError:
+        raise SystemExit("Usage: python rmnoise.py <fits_list_path>")
 
-if __name__ == "__main__":
-    fits_list_path = sys.argv[1]
     rmnoise_list(fits_list_path)
 
 
-
-
-
+if __name__ == "__main__":
+    main()
