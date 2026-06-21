@@ -20,7 +20,7 @@ from scipy.ndimage import binary_dilation
 from photutils.aperture import CircularAperture
 # from photutils.segmentation import make_source_mask # photutils<1.0 old
 from photutils.segmentation import SourceCatalog, detect_sources
-# from astropy.convolution import interpolate_replace_nans, Gaussian2DKernel
+from astropy.convolution import interpolate_replace_nans, Gaussian2DKernel
 from astropy.convolution import convolve, convolve_fft, Gaussian2DKernel, Box2DKernel, interpolate_replace_nans
 from skimage.morphology import disk
 from scipy.ndimage import gaussian_filter, median_filter
@@ -123,19 +123,6 @@ def save_fits(filename, data, header, outdir='./output'):
     fits.writeto(output_path, data, header, overwrite=True)
 
 
-'''
-# Load the FITS file
-# fits_file = "example.fits"
-# hdul = fits.open(fits_file)
-# data = hdul[0].data
-# header = hdul[0].header
-# hdul.close()
-
-# Set up WCS for coordinate transformations
-wcs = WCS(header)
-'''
-
-
 
 def as_pair(name, value, check_odd=True):
     """Convert a scalar or 2-tuple into a tuple of 2 ints."""
@@ -198,7 +185,10 @@ def identify_point_sources_mask(data):
     plt.savefig("point_source.png", dpi=200, bbox_inches="tight")
     plt.close()
 
-    return mask
+    data_masked = np.copy(data)
+    data_masked[mask] = np.nan
+
+    return data_masked
     
 
 
@@ -577,7 +567,7 @@ def interpolate2(data_masked, sigma=5):
     data_masked_wonan = fill_nan(despiked_image)
 
     # Create a kernel for interpolation
-    kernel = Gaussian2DKernel(x_stddev=5)
+    kernel = Gaussian2DKernel(x_stddev=2)
     
     # Interpolate over masked regions
     # despiked_image = interpolate_replace_nans(data_masked, kernel)
@@ -764,9 +754,10 @@ def despike_all(fits_list_path):
         # nx = hd0['NAXIS1']
         # ny = hd0['NAXIS2']
 
-        sources_x, sources_y = identify_point_sources3(data)
-        # data_masked = mask_poinnt_sources(data, sources_x, sources_y, radius=5.0)
-        data_masked = mask_poinnt_sources_phoseg(data)
+        # sources_x, sources_y = identify_point_sources3(data)
+        # data_masked = mask_point_sources(data, sources_x, sources_y, radius=5.0)
+        data_masked = identify_point_sources_mask(data)
+        # data_masked = mask_poinnt_sources_phoseg(data)
         despiked_data = interpolate2(data_masked, sigma=5)
 
         # despiked_data = despiker(data)
