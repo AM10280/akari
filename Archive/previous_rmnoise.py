@@ -1,6 +1,8 @@
 #自動でノイズ範囲を決定→マスク（高速）
 import sys
 import numpy as np
+import csv
+import pprint
 from astropy.io import fits
 # from astropy.convolution import convolve, convolve_fft
 from astropy.convolution import Gaussian2DKernel, interpolate_replace_nans
@@ -324,6 +326,40 @@ def delta_PS_move_ave(gx,yf,rolling_yf,base_std, filename, ext):
 
 
 
+#    with open('diagram.txt', 'a') as f:
+#        print(gx, filename, np.abs(yf), sep='#', end='owari', file=f)
+#        f.write(gx, filename, np.abs(yf))
+
+
+#Left Right
+    if ext == '_L' :
+#        np.save('power_l.npy', np.abs(yf))
+        with open('diagram_l.txt', 'a') as f:
+            print(np.abs(yf).tolist(), file=f)
+#            np.save(f, np.abs(yf))
+
+        with open('diagram_l.csv', 'a') as f:
+            writer = csv.writer(f)
+            writer.writerow(np.abs(yf).tolist())
+
+    if ext == '_R' :
+#        np.save('power_r.npy', np.abs(yf))
+        with open('diagram_r.txt', 'a') as f:
+            print(np.abs(yf), file=f)
+#            np.save(f, np.abs(yf))
+
+        with open('diagram_r.csv', 'a') as f:
+            writer = csv.writer(f)
+            writer.writerow(np.abs(yf).tolist())
+
+#        print(np.abs(yf).tolist())
+
+
+
+# np.savez('power.npz', a=a, b=b)
+
+
+
 #    plt.figure(figsize=(8,3))
 #    plt.xlim(-0.01,0.5)
 #    plt.ylim(-0.01,0.1)
@@ -610,3 +646,10 @@ def rmnoise_list(fits_list_path):
 fits_list_path = sys.argv[1]
 rmnoise_list(fits_list_path)
 
+
+
+
+
+
+
+# pt diagram
