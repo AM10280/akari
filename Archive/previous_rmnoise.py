@@ -219,7 +219,7 @@ def rm_noise_6data(yf,msk_range, xlim1, xlim2):
 ###    return()
 
 #パワースペクトルにマスクをかけてスムージング
-def rm_noise_PS(yf,msk_range):
+def rm_noise_PS(gx,yf,rolling_yf,msk_range,snumber):
     for y in range(0,304):
         if msk_range[y] == 1:
             nm = 0
@@ -239,6 +239,22 @@ def rm_noise_PS(yf,msk_range):
     for y in range(0,303):
         yf[607-y] = yf[y]
     
+    plt.figure(figsize=(8,5))
+    plt.xlim(-0.01,0.5)
+    plt.ylim(-0.01,0.1)
+    plt.plot(gx, np.abs(yf), label='power spectrum')
+    plt.plot(gx,rolling_yf,label='moving average', alpha=0.7) 
+    plt.title('power spectrum and moving average')
+    plt.title('mask range')
+    plt.xlabel('frequency')
+    plt.ylabel('power')
+    plt.plot(gx,msk_range, alpha=0.7)
+    #plt.legend()
+    rnp_filename = os.path.join('rnp/' + filename + snumber + '.png')
+    plt.savefig(rnp_filename, format='png', dpi=300, bbox_inches='tight', pad_inches=0.1)
+    #plt.show()
+    plt.close()
+
     return(yf)
 
 # Ycut構造体の全pixelデータについて、1次元FFTをする
@@ -372,7 +388,7 @@ def test_fft_compare(ss, ext):
     return(yf1,gx1)
 
 #moving averageと実際の関数の差からマスク位置を決定
-def delta_m_ave_self_fft(gx,yf,side):
+def delta_m_ave_self_fft(gx,yf,side,snumber):
     rolling_yf = bn.move_mean(np.abs(yf),window=25)
     nan_roll = 0
     for nan_roll in range(0,500):#(0,292)~(0,583)
@@ -396,18 +412,21 @@ def delta_m_ave_self_fft(gx,yf,side):
         if fity_selfFFT[y] >= 3*std:
             msk_range[y] = 1
     
-    #plt.xlim(-0.01,0.5)
-    #plt.ylim(-0.01,0.1)
-    #plt.plot(gx, np.abs(yf), label='power spectrum')
-    #plt.plot(gx, rolling_yf, label='moving average') 
-    #plt.title('power spectrum and moving average')
-    #plt.title('mask range')
-    #plt.xlabel('frequency')
-    #plt.ylabel('power')
-    #plt.plot(gx,msk_range)
+    plt.figure(figsize=(8,5))
+    plt.xlim(-0.01,0.5)
+    plt.ylim(-0.01,0.1)
+    plt.plot(gx, np.abs(yf), label='power spectrum')
+    plt.plot(gx, rolling_yf, label='moving average', alpha=0.7) 
+    plt.title('power spectrum and moving average')
+    plt.title('mask range')
+    plt.xlabel('frequency')
+    plt.ylabel('power')
+    plt.plot(gx,msk_range, alpha=0.5)
     #plt.legend()
+    mask_filename = os.path.join('mask/' + filename + snumber + '.png')
+    plt.savefig(mask_filename, format='png', dpi=300, bbox_inches='tight', pad_inches=0.1)
     #plt.show()
-    #plt.close()
+    plt.close()
 
     return(msk_range,std,rolling_yf)
 
@@ -439,7 +458,6 @@ def delta_PS_move_ave(gx,yf,rolling_yf,base_std, ext):
     #plt.legend()
 
     noise_filename = os.path.join('noise/' + filename + ext + '.png')
-#    plt.savefig(noise_filename, bbox_inches='tight', pad_inches=0.1)
     plt.savefig(noise_filename, format='png', dpi=300, bbox_inches='tight', pad_inches=0.1)
     #plt.show()
     plt.close()
@@ -561,17 +579,17 @@ for y in range(0,608):
     yfl[y] = np.abs(yfl1[y])
 
 #moving averageと実際の関数の差からマスク位置を決定
-msk_rangel1,stdl1,rolling_yfl1 = delta_m_ave_self_fft(gxl1,yfl1,'left')
+msk_rangel1,stdl1,rolling_yfl1 = delta_m_ave_self_fft(gxl1,yfl1,'left','_l1')
 
 #パワースペクトルにマスクをかけてスムージング
-yfl2 = rm_noise_PS(yfl1,msk_rangel1)
+yfl2 = rm_noise_PS(gxl1,yfl1,rolling_yfl1,msk_rangel1,'_l1')
 
 #パワースペクトルにマスクをかけてスムージング
-msk_rangel2,stdl2,rolling_yfl2 = delta_m_ave_self_fft(gxl1,yfl2,'left')
-yfl3 = rm_noise_PS(yfl2,msk_rangel2)
+msk_rangel2,stdl2,rolling_yfl2 = delta_m_ave_self_fft(gxl1,yfl2,'left','_l2')
+yfl3 = rm_noise_PS(gxl1,yfl2,rolling_yfl2,msk_rangel2,'_l2')
 
 #moving averageと実際の関数の差からマスク位置を決定
-msk_rangel3,stdl3,rolling_yfl3 = delta_m_ave_self_fft(gxl1,yfl3,'left')
+msk_rangel3,stdl3,rolling_yfl3 = delta_m_ave_self_fft(gxl1,yfl3,'left','_l3')
 
 #２行目の自己相関関数
 rlist = pd.Series(rdata2)
@@ -584,18 +602,20 @@ yfr = np.zeros(N_yfr)
 for y in range(0,608):
     yfr[y] = np.abs(yfr1[y])
 
-#moving averageと実際の関数の差からマスク位置を決定
-msk_ranger1,stdr1,rolling_yfr1 = delta_m_ave_self_fft(gxr1,yfr1,'right')
 
-#パワースペクトルにマスクをかけてスムージング
-yfr2 = rm_noise_PS(yfr1,msk_ranger1)
-
-#パワースペクトルにマスクをかけてスムージング
-msk_ranger2,stdr2,rolling_yfr2 = delta_m_ave_self_fft(gxr1,yfr2,'right')
-yfr3 = rm_noise_PS(yfr2,msk_ranger2)
 
 #moving averageと実際の関数の差からマスク位置を決定
-msk_ranger3,stdr3,rolling_yfr3 = delta_m_ave_self_fft(gxr1,yfr3,'right')
+msk_ranger1,stdr1,rolling_yfr1 = delta_m_ave_self_fft(gxr1,yfr1,'right','_r1')
+
+#パワースペクトルにマスクをかけてスムージング
+yfr2 = rm_noise_PS(gxr1,yfr1,rolling_yfr1,msk_ranger1,'_r1')
+
+#パワースペクトルにマスクをかけてスムージング
+msk_ranger2,stdr2,rolling_yfr2 = delta_m_ave_self_fft(gxr1,yfr2,'right','_r2')
+yfr3 = rm_noise_PS(gxr1,yfr2,rolling_yfr2,msk_ranger2,'_r2')
+
+#moving averageと実際の関数の差からマスク位置を決定
+msk_ranger3,stdr3,rolling_yfr3 = delta_m_ave_self_fft(gxr1,yfr3,'right','_r3')
 
 #moving averageと実際の関数の差からマスク位置を決定(正確)
 mask_rangel = delta_PS_move_ave(gxl1,yfl,rolling_yfl3,stdl3,'_L')
