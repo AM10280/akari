@@ -1,50 +1,45 @@
 import sys
-import numpy as np
-from astropy.io import fits
-import matplotlib.pyplot as plt
 import os
+import numpy as np
+# import matplotlib.pyplot as plt
+from astropy.io import fits
+from astropy.convolution import convolve, Gaussian2DKernel
+# from multiprocessing import Pool
 
-
-
-# Read the list of FITS files
 def read_fits_list(fits_list_path):
+    """Read list of FITS files from a text file."""
     with open(fits_list_path, 'r') as file:
-        file_paths = file.read().splitlines()
-#        fitsname = os.path.basename(file_paths)
-    return file_paths
-
-
+        return file.read().splitlines()
 
 def read_fits(file):
+    """Read data and header from a FITS file."""
     with fits.open(file) as hdul:
-        data = hdul[0].data
-        header = hdul[0].header
-    return data, header
-
+        return hdul[0].data, hdul[0].header
 
 
 def load_fits_images(fits_files):
-    data_list = []
-    for file in fits_files:
-        with fits.open(file) as hdul:
-            data = hdul[0].data
-            data_list.append(data)
-    return data_list
+    """Load all FITS images into a list of data arrays."""
+    return [read_fits(file)[0] for file in fits_files]
 
-
+'''
+def load_fits_images(fits_files):
+    """Load data arrays from all FITS files using parallel processing."""
+    with Pool() as pool:
+        return pool.map(lambda file: read_fits(file)[0], fits_files)
+'''
 
 def despike(data, threshold=5.0):
-    # Example despike process: replace values greater than 'threshold' times the std with median
+    """Despike data by replacing spikes with the median.
+    replace values greater than 'threshold' times the std with median"""
     median_val = np.median(data)
     std_dev = np.std(data)
-    data[np.abs(data - median_val) > threshold * std_dev] = median_val
+    mask = np.abs(data - median_val) > threshold * std_dev
+    data[mask] = median_val
     return data
 
 
-
-
 # gauss_fill - Fill NaN values with Gaussian-weighted mean of surroundings
-def gauss_fill(image, sigma=5.):
+def gauss_fill0(image, sigma=5.):
     # Find the indices of NaN values in the image
     mask = np.where(np.isnan(image))
     rows, cols = image.shape
@@ -62,88 +57,96 @@ def gauss_fill(image, sigma=5.):
 
 
 
-
-# Gaussian 
-def despiker3(image, sigma=5):
-    imw = np.copy(image)
+def gauss_fill(image, sigma=5.0):
+    """Fill NaN values using my own Gaussian filter.
+     gauss_fill - Fill NaN values with Gaussian-weighted mean of surroundings"""
+    mask = np.isnan(image)
+    rows, cols = image.shape
+    cj, ci  = np.meshgrid(range(cols), range(rows)) #誤差が少ない
+    # ci, cj = np.meshgrid(np.arange(cols), np.arange(rows)) #高速とされる
     
+    for i, j in zip(*np.where(mask)):
+        # gg = np.exp(-(((ci-i)/sigma)**2+((cj-j)/sigma)**2)/2)      
+        gg = np.exp(-(((ci - i) ** 2 + (cj - j) ** 2) / (2 * sigma ** 2)))
+        #gg = np.exp(-(((ci - j) ** 2 + (cj - i) ** 2) / (2 * sigma ** 2)))
+        gg[mask] = 0  # Set weights for NaN positions to 0
+        weighted_sum = np.nansum(image * gg)
+        weight_total = np.nansum(gg)
+        image[i, j] = weighted_sum / weight_total if weight_total != 0 else np.nan
+    return image
+
+
+
+def gauss_fill2(image, sigma=5.0):
+    """Fill NaN values using my own Gaussian filter.
+     gauss_fill - Fill NaN values with Gaussian-weighted mean of surroundings"""
+    mask = np.isnan(image)
+    rows, cols = image.shape
+    cj, ci  = np.meshgrid(range(cols), range(rows)) #誤差が少ない
+    # ci, cj = np.meshgrid(np.arange(cols), np.arange(rows)) #高速とされる
+    
+    for i, j in zip(*np.where(mask)):
+        gg = np.exp(-(((ci - j) ** 2 + (cj - i) ** 2) / (2 * sigma ** 2)))
+        gg[mask] = 0  # Set weights for NaN positions to 0
+        weighted_sum = np.nansum(image * gg)
+        weight_total = np.nansum(gg)
+        image[i, j] = weighted_sum / weight_total if weight_total != 0 else np.nan
+    return image
+
+
+def gauss_fill_astropy(image, sigma=5.0):
+    """Efficiently fill NaN values using a Gaussian filter with astropy."""
+    mask = np.isnan(image)
+    filled_image = np.where(mask, 0, image)  # Set NaN values to 0 for initial convolution
+
+    # Create a Gaussian kernel with a specified sigma
+    gaussian_kernel = Gaussian2DKernel(sigma)
+    
+    # Convolve the image with the Gaussian kernel
+    filled_image = convolve(filled_image, gaussian_kernel, normalize_kernel=True)
+    weights = convolve(~mask.astype(float), gaussian_kernel, normalize_kernel=True)
+    
+    # Normalize by the weights and fill NaN areas
+    filled_image[mask] = filled_image[mask] / weights[mask]
+    return filled_image
+
+
+def gauss_fill_scipy(image, sigma=5.0):
+    """Efficiently fill NaN values using a Gaussian filter."""
+    from scipy.ndimage import gaussian_filter
+    mask = np.isnan(image)
+    filled_image = image.copy()
+    filled_image[mask] = 0  # Set NaN to 0 for filling
+    filled_image = gaussian_filter(filled_image, sigma=sigma)
+    weights = gaussian_filter(~mask, sigma=sigma)
+    filled_image[mask] = filled_image[mask] / weights[mask]
+    return filled_image
+
+
+def despiker3(image, sigma=5):
+    """Enhanced despiking using iterative replacement and Gaussian smoothing."""
+    imw = np.copy(image)
     while True:
         ave = np.nanmean(imw)
         sgm = np.nanstd(imw)
-
-        # replace spikes (outliers) with NaN
-        cond = np.abs(imw - ave) > sigma * sgm
-        cnt = np.count_nonzero(cond)
-        # cnt = np.sum(cond)
-        if cnt == 0:
+        mask = np.abs(imw - ave) > sigma * sgm
+        if not np.any(mask):
             break
-        # Mark spikes in the mask and set them to NaN in the data
-        imw[cond] = np.nan
-
-    # Fill NaNs using Gaussian smoothing
-    imw_filled = gauss_fill(imw, sigma)
-    image_despiked = imw_filled
-    # image_spikes = image - image_despiked
-
-    return image_despiked
-
-
-def create_stack_image(data_list):
-    despiked_data = [despike(data) for data in data_list]
-    stacked_image = np.mean(despiked_data, axis=0)
-    # stacked_image_med = np.median(despiked_data, axis=0)
-    return stacked_image
-
-def create_profile_x_direction(stack_image):
-    # profile_x_ave = np.mean(stack_image, axis=0)
-    profile_x = np.median(stack_image, axis=0)
-    return profile_x
-
-def compute_difference(profile_x, x_range1=(6, 63), x_range2=(69, 126)):
-    profile_diff = np.zeros_like(profile_x)
-    mean_val = np.mean(profile_x)
-    profile_diff[x_range1[0]:x_range1[1]+1] = profile_x[x_range1[0]:x_range1[1]+1] - mean_val
-    profile_diff[x_range2[0]:x_range2[1]+1] = profile_x[x_range2[0]:x_range2[1]+1] - mean_val
-    return profile_diff
-
-def create_corrected_pattern_image(profile_diff, img_shape):
-    pattern_image = np.tile(profile_diff, (img_shape[0], 1))
-    return pattern_image
-
-def subtract_pattern_from_original(fits_data, pattern_image):
-    corrected_data = fits_data - pattern_image
-    return corrected_data
+        imw[mask] = np.nan
+    return gauss_fill(imw, sigma)
 
 
 def write_fits(filename, data, header, outdir):
-    """Writes data to a FITS file with the provided header."""
-    hdu = fits.ImageHDU(data, header=header)
-#    hdr = fits.Header()
-    primary_hdu = fits.PrimaryHDU(header=header)
-    hdul = fits.HDUList([primary_hdu, hdu])
-    output_path = os.path.join(outdir, filename + '.fits')
-    hdul.writeto(output_path, overwrite=True)
+    """Write FITS file to specified directory."""
+    output_path = os.path.join(outdir, f"{filename}.fits")
+    fits.writeto(output_path, data, header, overwrite=True)
 
-    # hdu = fits.PrimaryHDU(data)
-    # output_path = f"{outdir}/{filename}.fits"
-    # hdu.writeto(output_path, overwrite=True)
-
-
-
-
-
-def rm_stripes(file, pattern_image):
-
-    if 'outdir' not in locals():
-        outdir='./rmstripes'
-    if not os.path.exists(outdir):
-        os.makedirs(outdir)
-
+def rm_stripes(file, pattern_image, outdir='./rmstripes'):
+    """Remove stripes and save corrected FITS images."""
+    os.makedirs(outdir, exist_ok=True)
     filename = os.path.basename(file).replace('.fits', '')
-
     data, header = read_fits(file)
     data = data.astype(np.float64)
-
     # Extract NAXIS1 and NAXIS2 from header
     # nx = hd0['NAXIS1']
     # ny = hd0['NAXIS2']
@@ -152,51 +155,42 @@ def rm_stripes(file, pattern_image):
     # ny,nx = (len(data)-offy, len(data[0]))
 
 
-
-    # Step 5: Subtract the pattern image from each FITS data and save result
-    stripes_removed_data = data - pattern_image
-
-    write_fits(filename, stripes_removed_data, header, outdir)
-
-
-
+    # Subtract pattern image from original FITS data
+    corrected_data = data - pattern_image
+    write_fits(filename, corrected_data, header, outdir)
 
 def rm_stripes_outer(fits_files):
-
-    # Step 1: Load and create a stack image
+    """Compute the pattern image for all FITS files."""
+    # Load all FITS images into a list of data arrays
     data_list = load_fits_images(fits_files)
-    stacked_image = create_stack_image(data_list)
+    # data_list = [read_fits(file)[0] for file in fits_files]
 
-    # Step 2: Profile in X direction
-    profile_x = create_profile_x_direction(stacked_image)
+    # Create a stacked image by despiking each data array  
+    # despiked_data = [despike(data) for data in data_list]
+    despiked_data = [despiker3(data) for data in data_list]
+    stacked_image = np.mean(despiked_data, axis=0)
+    # Create a median profile along the X-direction
+    profile_x = np.median(stacked_image, axis=0)
 
+    # Compute the difference in specified X ranges and normalize
+    x_range1, x_range2 = (6, 63), (69, 126)
+    mean_val = np.mean(profile_x)
+    profile_diff = np.zeros_like(profile_x)
+    profile_diff[x_range1[0]:x_range1[1]+1] = profile_x[x_range1[0]:x_range1[1]+1] - mean_val
+    profile_diff[x_range2[0]:x_range2[1]+1] = profile_x[x_range2[0]:x_range2[1]+1] - mean_val
 
-    # Step 3: Compute difference in specified X range and set edges to 0
-    profile_diff = compute_difference(profile_x)
-
-    # Step 4: Create a corrected pattern image with the same shape as original data
-    img_shape = stacked_image.shape
-    pattern_image = create_corrected_pattern_image(profile_diff, img_shape)
-
-
-
-    return pattern_image
-
-
+    # Create a 2D pattern image based on the 1D profile difference
+    return np.tile(profile_diff, (stacked_image.shape[0], 1))
 
 def rm_stripes_list(fits_list_path):
-    input_files = read_fits_list(fits_list_path)
-    pattern_image = rm_stripes_outer(input_files)
-    for file in input_files:
-        # file = f + '.fits'
-        # filename = os.path.basename(file).replace('.fits', '')
+    """Main function to process all files."""
+    fits_files = read_fits_list(fits_list_path)
+    pattern_image = rm_stripes_outer(fits_files)
+    for file in fits_files:
         rm_stripes(file, pattern_image)
+    # with Pool() as pool:
+    #    pool.starmap(rm_stripes, [(file, pattern_image) for file in fits_files])
 
-
-
-fits_list_path = sys.argv[1]
-rm_stripes_list(fits_list_path)
-
-
-
-
+if __name__ == "__main__":
+    fits_list_path = sys.argv[1]
+    rm_stripes_list(fits_list_path)
