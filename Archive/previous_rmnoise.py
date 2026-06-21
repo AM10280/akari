@@ -434,15 +434,10 @@ def yf_plot(yf, x1,x2, mode):
             plt.plot(yf.gx*2, yf.ave.imag + 40*x2)
     else:
         print('No')
-    #プロット グラフ表示
     #plt.title('FFT of raw data(masked)')
     plt.xlabel('frequency')
     plt.ylabel('power')
-
-    plotm_filename = os.path.join('plotm/' + filename + '.png')
-    plt.savefig(plotm_filename, pad_inches=1)
-
-    #plt.show()
+    plt.show()
     return()
 
 
