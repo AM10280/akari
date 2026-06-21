@@ -25,14 +25,12 @@ def read_fits(file):
 def write_fits(file, data, header):
     """Writes data to a FITS file with the provided header."""
     hdu = fits.ImageHDU(data, header=header)
-#    hdr = fits.Header()
     primary_hdu = fits.PrimaryHDU(header=header)
     hdul = fits.HDUList([primary_hdu, hdu])
     hdul.writeto(file, overwrite=True)
 
 
-'''
-'''
+
 
 
 
@@ -171,20 +169,28 @@ def gauss_fill(image, sigma=5.):
 
 
 
+def field_peri_noise_reduction(image, mode=2, xlim=35, ylim=270):
+    """
+    mode 
+        0: y >= ylim
+        1: rhombus, x >= xlim & y >= ylim
+        2: ellipse, x >= xlim & y >= ylim
+    """
+    # Validate inputs
+    if not isinstance(image, np.ndarray) or image.ndim != 2:
+        raise ValueError("Input image must be a 2D numpy array.")
 
+    ny, nx = image.shape  # Dimensions of the image
 
-# derive stddev of non-signal region.
-def field_peri_noise_reduction(image, yrange=250):  # yrange 調整
-
-    # Copy the first 250 rows of the image
-    dat = image[0:yrange, :].copy()
-    # dat = np.copy(image[:yrange, :])  # deepcopy if n-dimensional array, have memories, take time
-    
+    # Initialize the working data and mask for noise detection in y < ylim
+    # Copy the first 270 rows of the image
+    dat = image[:ylim, :].copy()
     # Initialize a mask
     msk = np.zeros(dat.shape, dtype=int)
-    
+    # msk = np.zeros_like(dat, dtype=int)
+
     while True:
-        # Calculate mean and standard deviation, ignoring NaNs
+        # Calculate mean and standard deviation excluding NaN values
         ave = np.nanmean(dat)
         sgm = np.nanstd(dat)
         cond = np.abs(dat - ave) > sgm * 3    # condition  ## find mask regions
@@ -192,6 +198,8 @@ def field_peri_noise_reduction(image, yrange=250):  # yrange 調整
         cnt = np.count_nonzero(cond)
         if cnt == 0:
             break
+
+        # Replace outliers with NaN and update the mask
         # Mark noisy pixels in the mask and set them to NaN in the data
         dat[cond] = np.nan
         msk[cond] = 1
@@ -200,48 +208,79 @@ def field_peri_noise_reduction(image, yrange=250):  # yrange 調整
     nan_n = np.count_nonzero(np.isnan(dat))
     
     # Separate noisy and normal pixels
+    # Identify indices of noisy and normal regions
     noise_mask = np.where(msk == 1)
     normal_mask = np.where(msk == 0)
-
-    # Separate noisy and normal pixels
     # normal_mask = msk == 0
     # noise_mask = msk == 1
 
     # If there are no noisy or normal pixels, exit
 #    if len(noise_mask) == 0 or len(normal_mask) == 0:
+#        print("No noise detected or insufficient normal pixels.")
 #       return
-    
+        
     if nan_n == 0:
         return
 
     print(f'FieldPeriNoiseReduction: {nan_n} pixels are processed.')
 
+    # copy entire data to working data and identify pixels above the limit
     # Recalculate the data from the original image ←important
-    dat = image[0:yrange, :].copy()
-    
-    # Calculate noise suppression factor
-    # Calculate standard deviations for normal and noise pixels
+    # dat = image[:ylim, :].copy()
+    dat = image.copy()
+    # print(dat.shape)
+
+    # Calculate suppression factor
+    # sg_normal = np.std(image[:ylim, :][normal_mask])
+    # sg_noise = np.std(image[:ylim, :][noise_mask])
     sg_normal = np.std(dat[normal_mask])
     sg_noise = np.std(dat[noise_mask])
-
     if sg_noise != 0:  # Avoid division by zero
         suppression_factor = sg_normal / sg_noise
         print(f"Suppress factor = {suppression_factor}")
+
+        # full image cond?
+
         # Suppress noise by scaling
-        dat[noise_mask] *= sg_normal / sg_noise
-    
-    # Update the image
-    image[0:yrange, :] = dat
-    # image[55:59, 0:250] = dat[55:59, :]    # only central component
+        # Apply suppression factor to noisy pixels
+        dat[noise_mask] *= suppression_factor
+
+    # overwrite protected area by the original data
+    # Protect specific regions based on mode
+    if mode == 0:
+        print("Mode = 0: Protecting y >= ylim.")
+        dat[ylim:, :] = image[ylim:, :]
+    elif mode == 1:
+        print("Mode = 1: Protecting rectangular region.")
+        dat[ylim:, xlim:] = image[ylim:, xlim:]
+    elif mode == 2:
+        print("Mode = 2: Protecting elliptical region.")
+        ex = float(nx - xlim) # semi-major axis
+        ey = float(ny - ylim) # semi-minor axis
+        # Create a grid of coordinates
+        # y, x = np.ogrid[:ny, :nx]
+        x, y = np.meshgrid(np.arange(ny), np.arange(nx), indexing='ij')
+        # distance = ((x - (nx - 1)) / ex) ** 2 + ((y - (ny - 1)) / ey) ** 2
+        distance = ((x - nx) / ex) ** 2 + ((y - ny) / ey) ** 2
+        # Create the elliptical mask (1 inside the ellipse, 0 outside)
+        # elliptical_mask = distance <= 1
+        ellipse_idx = np.where(distance <= 1)
+        dat[ellipse_idx] = image[ellipse_idx]
+    else:
+        raise ValueError("Mode must be 0, 1, or 2.")
+
+
+    # Update the image with processed data
+    # image[:ylim, :] = dat
+    image = dat
 
     return image, msk
 
 
 
-
-
 # High-pass filter (Gaussian-based)
-def hpfilter(image, ksize=3, siglim=3.0):
+def hpfilter(image, ksize=2, siglim=3.0):
+    # kernel size = 3→2
     # Create a working copy of the input image
     imw = image.copy()
     # imw = np.copy(image)
@@ -284,7 +323,7 @@ def hpfilter(image, ksize=3, siglim=3.0):
 
 # despike - Spike removal
 # A simple despiking function that removes spikes from an image.
-def despiker(image, sigma=5):
+def despiker(image, sigma=3): # sigma 5→3
     """
     A simple despiking function that removes spikes from an image.
 
@@ -355,8 +394,8 @@ def tanzaku_noise_reduction(image, leftright, basename=None, outdir='./', verbos
     if not no_hpf:
         im_high, im_smth = hpfilter(im_target)
         if verbose:
-#            save_fits(os.path.join(outdir, basename + '_hpf' + lr + '.fits'), [im_high, im_smth])
-            save_fits(os.path.join(outdir, basename + '_hpf' + lr + '.fits'), np.hstack([im_high, im_smth]))
+            save_fits(os.path.join(outdir, basename + '_hpf' + lr + '.fits'), [im_high, im_smth])
+            # save_fits(os.path.join(outdir, basename + '_hpf' + lr + '.fits'), np.hstack([im_high, im_smth]))
         im_target = im_high
     else:
         im_high = im_target
@@ -366,8 +405,8 @@ def tanzaku_noise_reduction(image, leftright, basename=None, outdir='./', verbos
     if not no_despike:
         im_dsp, im_spk = despiker(im_target)
         if verbose:
-            # save_fits(os.path.join(outdir, basename + '_dsp' + lr + '.fits'), [im_dsp, im_spk])
-            save_fits(os.path.join(outdir, basename + '_dsp' + lr + '.fits'), np.hstack([im_dsp, im_spk]))
+            save_fits(os.path.join(outdir, basename + '_dsp' + lr + '.fits'), [im_dsp, im_spk])
+            # save_fits(os.path.join(outdir, basename + '_dsp' + lr + '.fits'), np.hstack([im_dsp, im_spk]))
         im_target = im_dsp
     else: 
         im_dsp = im_target
@@ -376,22 +415,19 @@ def tanzaku_noise_reduction(image, leftright, basename=None, outdir='./', verbos
     # Get the image size
     h, w = im_target.shape
 
-    # Mirror the data
-    # Create a new image that is 4 times the size by folding the original image with 1-pixel overlap
+    '''
+    # Mirror and copy the data
+    # Create a new image that is 4 times the size by folding the original image with 1-pixel overlap (to obtain zero imaginary data when FFT)
     # Horizontally mirror
-    h_mirror = np.hstack((im_target, im_target[:, -1:], np.fliplr(im_target)))
-    # h_center = w // 2
-    # h_mirror = np.hstack((image[:, :h_center+1], np.fliplr(image[:, h_center-1:])))
+    h_mirror = np.hstack((im_target, np.fliplr(im_target[:,:-2])))
 
     # and Vertically mirror
-    folded_image = np.vstack((h_mirror, h_mirror[-1, :], np.flipud(h_mirror)))
-
-    # v_center = h // 2
-    # folded_image = np.vstack((h_mirror[:v_center+1, :], np.flipud(h_mirror[v_center-1:, :])))
+    folded_image = np.vstack((h_mirror, np.flipud(h_mirror[:-2,:])))
 
     # im_target = folded_image
+    '''
 
-
+    
     # Mirror and copy the data (the way to obtain zero imaginary data when FFT)
     im4 = np.zeros((h * 2, w * 2))
 
@@ -406,6 +442,8 @@ def tanzaku_noise_reduction(image, leftright, basename=None, outdir='./', verbos
     im4[h:2*h, w:2*w] = np.flip(np.flip(im_target, axis=0), axis=1)
     
     folded_image = im4
+    
+
 
     if verbose:
         save_fits(os.path.join(outdir, basename + '_src' + lr + '.fits'), folded_image)
@@ -439,10 +477,6 @@ def tanzaku_noise_reduction(image, leftright, basename=None, outdir='./', verbos
         save_fits(os.path.join(outdir, basename + '_fft' + lr + '.fits'), oim)
     
 
-    # Extract the central portion in Fourier space corresponding to the original image's frequency content
-    # Extract the center part of the Fourier transformed image (original image's size)
-    # Masking noise area
-
     # Extract the left top region in Fourier space (original image's size)
     # fft_image_o = fft_image[:h, :w]
     fft_image_o = fft_image[0:h+1, 0:w+1]
@@ -455,14 +489,15 @@ def tanzaku_noise_reduction(image, leftright, basename=None, outdir='./', verbos
         save_fits(os.path.join(outdir, basename + '_fftm' + lr + '.fits'), np.abs(fft_masked))
         save_fits(os.path.join(outdir, basename + '_msk' + lr + '.fits'), np.abs(mask_area))
     
-
+    '''
     # Refold the masked Fourier image (with 1-pixel overlap)
     # Horizontally mirror (with 1-pixel overlap)
-    h_mirror_masked = np.hstack((fft_masked, fft_masked[:, -1:], np.fliplr(fft_masked)))
+    h_mirror_masked = np.hstack((fft_masked, np.fliplr(fft_masked[:,:-2])))
     # Vertically mirror
-    folded_fft_masked = np.vstack((h_mirror_masked, h_mirror_masked[-1, :], np.flipud(h_mirror_masked)))
+    folded_fft_masked = np.vstack((h_mirror_masked, np.flipud(h_mirror_masked[:-2,:])))
+    '''
 
-
+    
     # Mirror updated far to fa
     fa4 = np.zeros((h * 2, w * 2))
 #    fa4 = np.real(folded_image)
@@ -479,6 +514,7 @@ def tanzaku_noise_reduction(image, leftright, basename=None, outdir='./', verbos
     fa4[h:2*h, w:2*w] = np.flip(np.flip(fft_masked[1:h+1, 1:w+1], axis=0), axis=1)
 
     folded_fft_masked = fa4
+    
 
     if verbose:
         save_fits(os.path.join(outdir, basename + '_fa4' + lr + '.fits'), np.abs(folded_fft_masked))
@@ -492,10 +528,10 @@ def tanzaku_noise_reduction(image, leftright, basename=None, outdir='./', verbos
     ifft_shifted = ifftshift(folded_fft_masked)
 
     # Inverse Fourier Transform to recover the image
-    reconstructed_image = np.real(ifft2(ifft_shifted))
-    # reconstructed_image = ifft2(ifft_shifted)
+    # reconstructed_image = np.real(ifft2(ifft_shifted))
+    reconstructed_image = ifft2(ifft_shifted)
     print(f'Total imaginary component (inverse FFT) is {np.sum(np.abs(np.imag(reconstructed_image)))}')
-    # reconstructed_image = np.real(reconstructed_image)
+    reconstructed_image = np.real(reconstructed_image)
     im_difference = reconstructed_image - folded_image
 
     if verbose:
@@ -514,6 +550,7 @@ def tanzaku_noise_reduction(image, leftright, basename=None, outdir='./', verbos
     
     # Cut to original size
     reconstructed_image_o = reconstructed_image[1:h+1, 1:w+1]
+    # reconstructed_image_o = reconstructed_image[:h, :w]
 
     # Recover removed smooth component and spikes
     reconstructed_image_o += im_spk + im_smth
@@ -640,7 +677,7 @@ def tanzakurmnoise2d(file, leftonly=False, rightonly=False, outdir='./', verbose
 
 # Cen Aを含む
 # tanzakurmnoise2d('F0439699725_4NS.fits', leftonly=False, rightonly=False, outdir='./output', verbose=True, nodespike=False, nohpf=False, raw=False)
-tanzakurmnoise2d('F0439699725_4NS.fits', leftonly=False, rightonly=False, outdir='./output', verbose=False, nodespike=False, nohpf=False, raw=False)
+# tanzakurmnoise2d('F0439699725_4NS.fits', leftonly=False, rightonly=False, outdir='./output', verbose=False, nodespike=False, nohpf=False, raw=False)
 
 # 暗い 星の少ない領域
 # tanzakurmnoise2d('F0977264488_4NS.fits', leftonly=False, rightonly=False, outdir='./output', verbose=True, nodespike=False, nohpf=False, raw=False)
