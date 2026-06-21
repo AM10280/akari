@@ -68,49 +68,6 @@ def gauss_fill(image, sigma=5.):
     return image
 
 
-def despiker(image, sigma=5.0, threshold=3.0, max_iterations=10):
-    """Enhanced despiking with iterative replacement and Gaussian smoothing."""
-    imw = np.copy(image)
-    iterations = 0
-    while iterations < max_iterations:
-        ave = np.nanmean(imw)
-        sgm = np.nanstd(imw)
-        mask = np.abs(imw - ave) > threshold * sgm
-        if not np.any(mask):
-            break
-        imw[mask] = np.nan
-        iterations += 1
-    return gauss_fill(imw, sigma)
-
-
-
-def despiker3(image, sigma=3): # sigma 5→3
-    imw = np.copy(image)
-    
-    while True:
-        ave = np.nanmean(imw)
-        sgm = np.nanstd(imw)
-
-        # replace spikes (outliers) with NaN
-        cond = np.abs(imw - ave) > sigma * sgm
-        cnt = np.count_nonzero(cond)
-        # cnt = np.sum(cond)
-        if cnt == 0:
-            break
-        # Mark spikes in the mask and set them to NaN in the data
-        imw[cond] = np.nan
-
-    # Fill NaNs using Gaussian smoothing
-    imw_filled = gauss_fill(imw, sigma)
-#    imw_filled = replace_nans(imw, sigma)
-
-    # The despiked image is the filled working image
-    image_despiked = imw_filled
-
-    # The spikes image is the difference between the original and the despiked image
-    image_spikes = image - image_despiked
-
-    return image_despiked
 
 
 
@@ -192,7 +149,7 @@ def de_stripes_outer(fits_files):
     # original code sigma_clipping
     # mean_image = sigma_clipping2(despiked_data_stack, sigma=3.0, threshold=5.0, max_iterations=5)
 
-    save_fits(mean_image, 'mean_image')
+    # save_fits(mean_image, 'mean_image')
 
     # Create a profile image for pattern removal
     mean_image_cropped = mean_image[:-2, :]  # Exclude the last 3 rows
@@ -200,27 +157,6 @@ def de_stripes_outer(fits_files):
 
     # Create a (mean or median) profile along the X-direction
     profile_x = np.mean(mean_image_cropped, axis=0)
-
-
-    file_path='A'
-    plt.figure(figsize=(12, 6))
-    plt.plot(profile_x, label='Average Profile', color='b', alpha=0.7)
-    # plt.plot(median_profile, label='Median Profile', color='r', alpha=0.7)
-    # plt.ylim(-16.2, 7)
-    plt.ylim(0, 225)
-    plt.xlabel('Pixel (X-direction)')
-    plt.ylabel('Profile Value')
-    plt.title('Average Profiles')
-    # plt.title('Median Profiles of FITS Image (Y-Integrated)')
-    # plt.legend()
-    plt.grid()
-    outdir="./profile_ave"
-    os.makedirs(outdir, exist_ok=True)
-    filename = os.path.basename(file_path).rstrip('.fits')
-    plot_filename = os.path.join('profile_ave', f'{filename}.png')
-    plt.savefig(plot_filename, format='png', dpi=150, bbox_inches='tight', pad_inches=0.1)
-    #plt.show()
-    plt.close()
 
 
     """
@@ -260,7 +196,7 @@ def de_stripes_outer(fits_files):
     # pattern_image = np.tile(profile_section, (mean_image.shape[0], 1))
     pattern_image = np.tile(profile_x, (mean_image.shape[0], 1))
 
-    save_fits(pattern_image, 'pattern_image')
+    # save_fits(pattern_image, 'pattern_image')
     
     return pattern_image
 
