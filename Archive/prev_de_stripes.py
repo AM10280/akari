@@ -2,9 +2,9 @@ import sys
 import os
 import numpy as np
 import matplotlib.pyplot as plt
-import seaborn as sns
-import pandas as pd
-import csv
+# import seaborn as sns
+# import pandas as pd
+# import csv
 from astropy.io import fits
 from astropy.stats import sigma_clip
 from astropy.convolution import convolve, Gaussian2DKernel, interpolate_replace_nans
@@ -16,8 +16,8 @@ import time
 # plt.style.use("seaborn-v0_8")
 # plt.style.use('seaborn-darkgrid')
 # plt.style.use('seaborn-whitegrid')
-sns.set(font='IPAexGothic')
-sns.set_style("whitegrid")
+# sns.set(font='IPAexGothic')
+# sns.set_style("whitegrid")
 # sns.set_style("darkgrid")
 
 
