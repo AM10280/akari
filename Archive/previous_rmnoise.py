@@ -115,15 +115,40 @@ def rm_noise_6data(yf,msk_range, xlim1, xlim2):
                 nm = 0
                 n = 0
                 i = 0
-                while n < 3:
+                while n < 3 and y+1+i < yf.ny:
                     if msk_range[2*y+1+i] == 0:
-                        nm += yf.data[x][y-3+n]+yf.data[x][y+1+i]
+                        nm += yf.data[x][y+1+i]
                         n += 1
-                        i += 1
-                    elif msk_range[2*y+1+i] != 0:
-                        i += 1
-                ave = nm/n/2.0
+                    i += 1
+                m = 0
+                j = 0
+                while m < 3 and y-1-j >= 0:
+                    if msk_range[2*y-1-j] == 0:
+                        nm += yf.data[x][y-1-j]
+                        m += 1
+                    j += 1
+                ave = nm / (n + m)
                 yf.data[x][y] = ave
+    return()
+#                while i < 3 and y+1+i < yf.ny:
+#                    if msk_range[2*y+1+i] == 0:
+#                        nm += yf.data[x][y+1+i]
+#                        i += 1
+#                while n < 3 and y-1-n >= 0:
+#                    if msk_range[2*y-1-n] == 0:
+#                        nm += yf.data[x][y-1-n]
+#                        n += 1
+#                ave = nm / (i + n)
+#                yf.data[x][y] = ave
+##               while n < 3:
+##                   if msk_range[2*y+1+i] == 0:
+##                       nm += yf.data[x][y-3+n]+yf.data[x][y+1+i]
+##                       n += 1
+##                       i += 1
+##                   elif msk_range[2*y+1+i] != 0:
+##                       i += 1
+##               ave = nm/n/2.0
+##               yf.data[x][y] = ave
 #                yf.data[x][y-1] = ave
 #                yf.data[x][y+1] = ave
 #            if msk_range[2*y+1] == 1:
@@ -381,7 +406,6 @@ def test_fft_compare(ss, ext):
     plot_filename = os.path.join('plot/' + filename + ext + '.png')
 #    plot_filename = os.path.join('/Users/yamamura/Desktop/to_weka/IRCMap_doublestar/Qnoise/u_20230818/test/plot/' + filename + ext + '.png')
 #    print(plot_filename)
-#    plt.savefig(plot_filename, bbox_inches='tight', pad_inches=0.1)
     plt.savefig(plot_filename, format='png', dpi=300, bbox_inches='tight', pad_inches=0.1)
 #    plt.show()
     plt.close()
@@ -515,7 +539,8 @@ def yf_plot(yf, x1,x2, mode, ext):
     plt.xlabel('frequency')
     plt.ylabel('power')
 
-    #plt.show()
+#    plt.savefig('ypplot' + ext + '.png')
+#    plt.show()
     return()
 
 
@@ -634,7 +659,7 @@ mask_ranger = delta_PS_move_ave(gxr1,yfr,rolling_yfr3,stdr3,'_R')
 #FFTをかける
 yf = ycut_fft(ycut, 1,ycut.nx)
 
-#yf_plot(yf, x1,x2, "abs")
+yf_plot(yf, x1,x2, "abs", "_b")
 
 #自動で決定した範囲のノイズを除去
 #rm_noise_left_6data(yf,mask_rangel)
