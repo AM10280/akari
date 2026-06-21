@@ -480,8 +480,12 @@ def tanzaku_noise_reduction(image, leftright, basename=None, outdir='./', verbos
     # Extract the left top region in Fourier space (original image's size)
     # fft_image_o = fft_image[:h, :w]
     fft_image_o = fft_image[0:h+1, 0:w+1]
+    # save_fits(os.path.join(outdir, basename + '_fft_o' + lr + '.fits'), np.abs(fft_image_o))
     # Apply a noise reduction filter     
     real_fft = np.real(fft_image_o)
+    if verbose:
+        save_fits(os.path.join(outdir, basename + '_fft_oreal' + lr + '.fits'), np.abs(real_fft))
+
     fft_masked, mask_area = field_peri_noise_reduction(real_fft)
 
 
