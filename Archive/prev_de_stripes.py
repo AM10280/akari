@@ -178,7 +178,8 @@ def de_stripes_outer(fits_files):
     # clipped_stack = sigma_clip(despiked_data_stack, sigma=3, maxiters=5, axis=0, masked=False)
     
     # Replace outliers with NaN for further processing
-    sigma_clipped_stack = np.where(clipped_stack.mask, np.nan, despiked_data_stack)
+    ## sigma_clipped_stack = np.where(clipped_stack.mask, np.nan, despiked_data_stack)
+    sigma_clipped_stack = np.where(clipped_stack.mask, np.nan, data_stack)
     # sigma_clipped_stack = clipped_stack.fill(np.nan)
     # sigma_clipped_stack = clipped_stack.fill(np.nanmean(clipped_stack))
     # print('sigma_clipped_stack: ', sigma_clipped_stack)
@@ -200,7 +201,7 @@ def de_stripes_outer(fits_files):
     # Create a (mean or median) profile along the X-direction
     profile_x = np.mean(mean_image_cropped, axis=0)
 
-    
+
     file_path='A'
     plt.figure(figsize=(12, 6))
     plt.plot(profile_x, label='Average Profile', color='b', alpha=0.7)
