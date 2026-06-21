@@ -6,25 +6,93 @@ from matplotlib import colormaps
 from matplotlib.colors import LinearSegmentedColormap, ListedColormap
 from astropy.io import fits
 from astropy.stats import sigma_clip, mad_std
+from astropy.stats import sigma_clipped_stats
 from astropy.wcs import WCS
 import astropy.units as u
 from astropy.coordinates import SkyCoord
 from astropy.coordinates import ICRS, Galactic, FK4, FK5
 from photutils.detection import DAOStarFinder
 from photutils.detection import find_peaks
+# from photutils.detection import detect_threshold # photutils<1.0 old
+from photutils.segmentation import detect_sources
+from scipy.ndimage import binary_dilation
 # from photutils import CircularAperture
 from photutils.aperture import CircularAperture
-from photutils.segmentation import make_source_mask
+# from photutils.segmentation import make_source_mask # photutils<1.0 old
 from photutils.segmentation import SourceCatalog, detect_sources
 # from astropy.convolution import interpolate_replace_nans, Gaussian2DKernel
 from astropy.convolution import convolve, convolve_fft, Gaussian2DKernel, Box2DKernel, interpolate_replace_nans
+from skimage.morphology import disk
 from scipy.ndimage import gaussian_filter, median_filter
 from scipy.interpolate import griddata
+from scipy.ndimage import grey_dilation
+from scipy.signal import fftconvolve
 # from scipy.ndimage import median_filter
 # from scipy import stats
 import aplpy
 
 # print(photutils.__version__)
+
+
+
+
+
+class SourceMaskMaker:
+    """
+    Alternative class for photutils.make_source_mask
+    with following the features 
+    Estimation of background statistics (using sigma_clipped_stats) 
+    Generation of threshold masks 
+    Segmentation of sources (using detect_sources) 
+    Optional extension by dilation
+    """
+    def __init__(self, data):
+        self.data = np.asarray(data)
+
+    def make_source_mask(self, nsigma=2.0, npixels=5, dilate_size=None, mask=None):
+        """
+        Generate source mask (background estimation + threshold + segmentation)
+        Parameters
+        ----------
+        nsigma : float, optional
+            Use background median + nsigma x standard deviation as threshold (default: 2.0)
+
+        npixels : int, optional
+            Minimum number of connected pixels to be recognized as a segment (default: 5)
+
+        dilate_size : int or None, optional
+            Radius for dilating output mask with dilation (default: None)
+
+        mask : 2D bool array, optional
+            mask for regions of the input data that should be excluded (default: None)
+
+        Returns
+        -------
+        mask : 2D bool numpy array
+            True is mask image of source region
+        """
+        mean, median, std = sigma_clipped_stats(self.data, mask=mask)
+        threshold = median + nsigma * std
+        # threshold = median + (nsigma * std)
+
+        # detect threshold mask
+        segm = detect_sources(self.data, threshold, npixels=npixels, mask=mask)
+
+        if segm is None:
+            return np.zeros_like(self.data, dtype=bool)
+
+        source_mask = segm.data.astype(bool)
+
+        if dilate_size:
+            # create circular structuring element
+            from skimage.morphology import disk
+            struct = disk(dilate_size)
+            source_mask = binary_dilation(source_mask, structure=struct)
+
+        return source_mask
+
+
+
 
 def read_fits_list(fits_list_path):
     """Read list of FITS files from a text file."""
@@ -68,6 +136,49 @@ wcs = WCS(header)
 '''
 
 
+
+def as_pair(name, value, check_odd=True):
+    """Convert a scalar or 2-tuple into a tuple of 2 ints."""
+    if np.isscalar(value):
+        value = (int(value), int(value))
+    elif len(value) != 2:
+        raise ValueError(f'{name} must be a scalar or a 2-tuple')
+    if check_odd and any(v % 2 == 0 for v in value):
+        raise ValueError(f'{name} values must be odd')
+    return value
+
+def make_source_mask1(data, *, size=None, footprint=None):
+    mask = data.astype(bool)
+
+    if footprint is None:
+        if size is None:
+            return mask
+        size = as_pair('size', size, check_odd=False)
+        footprint = np.ones(size, dtype=bool)
+    else:
+        footprint = footprint.astype(bool)
+
+    if np.all(footprint):
+        # rectangular, faster
+        return grey_dilation(mask, footprint=footprint)
+    else:
+        return fftconvolve(mask.astype(float), footprint, mode='same') > 0.5
+
+def make_source_mask(data, nsigma=3.0, npixels=5, dilate_size=5):
+    mean, median, std = sigma_clipped_stats(data, sigma=3.0)
+    threshold = median + nsigma * std
+
+    segm = detect_sources(data, threshold, npixels=npixels)
+    if segm is None:
+        return np.zeros_like(data, dtype=bool)
+
+    mask = segm.data.astype(bool)
+
+    if dilate_size:
+        struct = disk(dilate_size)
+        mask = binary_dilation(mask, structure=struct)
+
+    return mask
 
 
 def identify_point_sources_mask(data):
@@ -122,9 +233,16 @@ def identify_point_sources3(data):
     # daofind = DAOStarFinder(fwhm=9.0, threshold=5.0*std)  # Adjust FWHM and threshold as needed
     sources = daofind(data)
     
-    
+    if sources is None or len(sources) == 0:
+        print("No sources detected.")
+        return np.array([]), np.array([])
+    # Extract positions
+    sources_x = np.array(sources['xcentroid'])
+    sources_y = np.array(sources['ycentroid'])
+
     # Plot detected sources
-    positions = (sources['xcentroid'], sources['ycentroid'])
+    positions = np.transpose([sources_x, sources_y])  # shape: (N, 2)
+    # positions = list(zip(sources_x, sources_y))
     apertures = CircularAperture(positions, r=4.)  # Radius for visualization
     plt.figure(figsize=(10, 8))
     plt.imshow(data, cmap='gray', origin='lower', vmin=0, vmax=np.percentile(data, 99))
@@ -133,9 +251,6 @@ def identify_point_sources3(data):
     plt.title('Detected Point Sources')
     plt.savefig("point_source_photutils_DAOStarFinder.png", dpi=200, bbox_inches="tight")
     plt.close()
-
-    sources_x = np.array(sources['xcentroid'])
-    sources_y = np.array(sources['ycentroid'])
 
     # coordinates = np.array([sources['xcentroid'], sources['ycentroid']]).T
 
@@ -229,15 +344,22 @@ def identify_point_sources4(data):
     
     '''
     
+
+
+
+
     
 def mask_poinnt_sources_phoseg(data):
     # Create a mask around the detected sources
+    # masker = SourceMaskMaker(data)
+    # mask = masker.make_source_mask(nsigma=3, npixels=5, dilate_size=5)
+
     mask = make_source_mask(data, nsigma=3, npixels=5, dilate_size=5)  # Adjust nsigma, npixels, and dilate_size as needed
     
     # Apply the mask to the data
     data_masked = np.copy(data)
     data_masked[mask] = np.nan
-    
+
     # Visualize the masked data
     # fig.show_colorscale(cmap='gray', stretch='linear', vmin=None, vmax=None)
     # fig.show_markers(x_sources, y_sources, edgecolor='red', facecolor='none', s=50, alpha=0.8)
@@ -263,7 +385,7 @@ def mask_poinnt_sources_phoseg1(data):
 
 
     
-def mask_poinnt_sources(data, sources_x, sources_y, radius=5.0):
+def mask_point_sources(data, sources_x, sources_y, radius=5.0):
     
     ## Remove or Mask Point Sources
     
@@ -410,6 +532,21 @@ def replace_nans(image, stddev):
 
 
 
+def fill_nan(data):
+        # mask NaNs
+        mask = np.isnan(data)
+        coords = np.array(np.nonzero(~mask)).T
+        values = data[~mask]
+        it = griddata(coords, values, np.array(np.nonzero(mask)).T, method='nearest')
+        
+        data_filled = data.copy()
+        data_filled[mask] = it
+    
+        return data_filled
+
+
+
+
 
 def interpolate1(data_masked, sigma=5):    
 
@@ -435,12 +572,17 @@ def interpolate2(data_masked, sigma=5):
     
     despiked_image = data_masked.copy()
     
+    # NaN removed by linear interpolation
+    # mask Nans
+    data_masked_wonan = fill_nan(despiked_image)
+
     # Create a kernel for interpolation
     kernel = Gaussian2DKernel(x_stddev=5)
     
     # Interpolate over masked regions
-    despiked_image = interpolate_replace_nans(data_masked, kernel)
-    
+    # despiked_image = interpolate_replace_nans(data_masked, kernel)
+    despiked_image = interpolate_replace_nans(data_masked_wonan, kernel)
+
     # save_fits('filename', data_masked, header)
     
     # Display cleaned data
@@ -612,11 +754,13 @@ def despike_all_mask2(fits_list_path):
 
 def despike_all(fits_list_path):
     fits_files = read_fits_list(fits_list_path)
-    for f in fits_files:
-        file = f + '.fits'
+    for file in fits_files:
+        # file = f + '.fits'
+        filename = file.rstrip('.fits')
         data, header = read_fits(file)
         # Set up WCS for coordinate transformations
-        wcs = WCS(header)
+        # wcs = WCS(header)
+
         # nx = hd0['NAXIS1']
         # ny = hd0['NAXIS2']
 
@@ -628,7 +772,8 @@ def despike_all(fits_list_path):
         # despiked_data = despiker(data)
         # despiked_image = despiker(image)
         returned_image = return_cena_ellipse(data, despiked_data)
-        save_fits(f, returned_image, header, outdir='despiked')
+        output_filename = filename + '_despiked'
+        save_fits(output_filename, returned_image, header, outdir='despiked')
         
     return
 
