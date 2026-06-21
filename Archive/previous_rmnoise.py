@@ -37,7 +37,6 @@ def read_fits_list(fits_list_path):
     with open(fits_list_path, 'r') as file:
         file_path = file.read().splitlines()
 #        fitsname = os.path.basename(file_path)
-    print(file_path)
     return file_path
 
 # FITSを読み込んで二次元配列 data[][] に格納する
