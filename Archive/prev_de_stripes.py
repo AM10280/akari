@@ -109,8 +109,8 @@ def save_profile(profile_x, season, outdir='./profile_ave_csv'):
     filename = os.path.basename(season).replace('.txt', '')
 
     profile_filename = os.path.join('profile_ave_csv', f'{filename}.csv')
-    # np.savetxt(profile_filename, profile_x)
-    np.savetxt('./profile_ave_csv/1st_season.csv', profile_x, delimiter=',')
+    np.savetxt(profile_filename, profile_x)
+    # np.savetxt('./profile_ave_csv/1st_season.csv', profile_x, delimiter=',')
 
 
 
@@ -119,8 +119,8 @@ def save_profile_diff(profile_x, season, outdir='./profile_ave_csv'):
     filename = os.path.basename(season).replace('.txt', '_d')
 
     profile_filename = os.path.join('profile_ave_csv', f'{filename}.csv')
-    # np.savetxt(profile_filename, profile_x)
-    np.savetxt('./profile_ave_csv/1st_season.csv', profile_x, delimiter=',')
+    np.savetxt(profile_filename, profile_x)
+    # np.savetxt('./profile_ave_csv/1st_season.csv', profile_x, delimiter=',')
 
 
 
@@ -129,10 +129,12 @@ def plot_profile(profile_x, season, outdir='./profile_ave'):
     filename = os.path.basename(season).replace('.txt', '')
 
     plt.figure(figsize=(12, 6))
-    plt.plot(profile_x, label='1st season', color='C0', alpha=0.7)
+    # plt.plot(profile_x, label='1st season', color='C0', alpha=0.7)
+    plt.plot(profile_x, label=filename, color='C0', alpha=0.7)
     # plt.plot(median_profile, label='Median Profile', color='r', alpha=0.7)
     # plt.ylim(-16.2, 7)
     # plt.ylim(0, 225)
+    plt.ylim(0, 250)
     # plt.ylim(-34, 11) # average, each 2 rows
     plt.xlabel('Pixel (X-direction)')
     plt.ylabel('Power')
@@ -153,7 +155,8 @@ def plot_profile_diff(profile_x, season, outdir='./profile_ave_diff'):
     filename = os.path.basename(season).replace('.txt', '')
 
     plt.figure(figsize=(12, 6))
-    plt.plot(profile_x, label='1st season', color='C0', alpha=0.7)
+    # plt.plot(profile_x, label='1st season', color='C0', alpha=0.7)
+    plt.plot(profile_x, label=filename, color='C0', alpha=0.7)
     # plt.plot(median_profile, label='Median Profile', color='r', alpha=0.7)
     # plt.ylim(-16.2, 7)
     # plt.ylim(0, 225)
