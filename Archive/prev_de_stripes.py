@@ -3,6 +3,7 @@ import os
 import numpy as np
 # import matplotlib.pyplot as plt
 from astropy.io import fits
+from astropy.stats import sigma_clip
 from astropy.convolution import convolve, Gaussian2DKernel, interpolate_replace_nans
 # from multiprocessing import Pool
 import time
@@ -153,6 +154,8 @@ def despiker3(image, sigma=5):
 def write_fits(filename, data, header, outdir):
     """Write FITS file to specified directory."""
     output_path = os.path.join(outdir, f"{filename}.fits")
+#    if np.ma.isMaskedArray(data):
+#        data = data.filled(np.nan)  # Convert to regular array, filling masked values
     fits.writeto(output_path, data, header, overwrite=True)
 
 def rm_stripes(file, pattern_image, outdir='./rmstripes'):
@@ -174,7 +177,7 @@ def rm_stripes(file, pattern_image, outdir='./rmstripes'):
     write_fits(filename, corrected_data, header, outdir)
 
 
-def create_pattern_image(fits_files):
+def rm_stripes_outer(fits_files):
     """Compute the pattern image for all FITS files."""
     # Load all FITS images into a list of data arrays
     data_list = load_fits_images(fits_files)
@@ -189,9 +192,13 @@ def create_pattern_image(fits_files):
     
     stacked_image_cropped = stacked_image[:-3, :]  # Exclude the last 3 rows
 
+    # Apply sigma clipping to remove outliers
+    clipped_data = sigma_clip(stacked_image_cropped, sigma=3, maxiters=5, axis=0)
+    clipped_data = clipped_data.filled(np.mean(clipped_data))  # Replace masked with mean
+
     # Create a (mean or median) profile along the X-direction
-    # profile_x = np.mean(stacked_image_cropped, axis=0)
-    profile_x = np.median(stacked_image_cropped, axis=0)
+    profile_x = np.mean(clipped_data, axis=0)
+    # profile_x = np.median(stacked_image_cropped, axis=0)
 
     # Compute the difference in specified X ranges and normalize
     x_range1, x_range2 = (6, 63), (69, 126)
@@ -202,13 +209,15 @@ def create_pattern_image(fits_files):
     profile_diff[x_range2[0]:x_range2[1]+1] = profile_x[x_range2[0]:x_range2[1]+1] - mean_val2
 
     # Create a 2D pattern image based on the 1D profile difference
-    return np.tile(profile_diff, (stacked_image.shape[0], 1))
+    # pattern_image = np.tile(profile_diff, (stacked_image.shape[0], 1))
+    pattern_image = np.tile(profile_x, (stacked_image.shape[0], 1))
 
-def rm_stripes_list(fits_list_path, for_pattern):
+    return pattern_image
+
+def rm_stripes_list(fits_list_path):
     """Main function to process all files."""
-    pattern_files = read_fits_list(for_pattern)
-    pattern_image = create_pattern_image(pattern_files)
     fits_files = read_fits_list(fits_list_path)
+    pattern_image = rm_stripes_outer(fits_files)
     for file in fits_files:
         rm_stripes(file, pattern_image)
     # with Pool() as pool:
@@ -216,5 +225,4 @@ def rm_stripes_list(fits_list_path, for_pattern):
 
 if __name__ == "__main__":
     fits_list_path = sys.argv[1]
-    for_pattern = sys.argv[2]
-    rm_stripes_list(fits_list_path, for_pattern)
+    rm_stripes_list(fits_list_path)
