@@ -9,67 +9,78 @@ from astropy.io import fits
 from astropy.convolution import convolve, Gaussian2DKernel, Box2DKernel, interpolate_replace_nans
 import matplotlib.pyplot as plt
 import logging
+from dataclasses import dataclass
+from typing import Callable, Tuple, Dict
 import time
+
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 
+# Configuration
 
-class Ycut:
-    def __init__(self, data):
-        self.data = data
-        self.ny, self.nx = data.shape
-        self.gx = np.arange(self.nx)
-        self.ave = None
+@dataclass
+class NoiseReductionConfig:
+    # Geometry
+    mode: int = 0
+    xlim: int = 35
+    ylim: int = 200
 
-    def compute_average(self):
-        self.ave = np.mean(self.data, axis=0)
-        return self.ave
+    # Filtering
+    kernel_size: float = 2.0  # 3→2
+    hpf_ksize: Tuple[float, ...] = (2.0, 1.0)
+    hpf_siglim: float = 3.0
 
-    def normalize(self):
-        self.data /= np.max(np.abs(self.data))
+    # Despike
+    despike_sigma: float = 3.0  # 5→3
+    # max_iter: int = 10
 
-    def copy(self):
-        return Ycut(self.data.copy())
+    # FFT
+    use_fftshift: bool = True
+
+    # Misc
+    seed: int | None = None
 
 
-class TanzakuContext:
-    def __init__(self, image):
-        self.original = image
-        self.working = image.copy()
-        self.header = header
-        self.ny, self.nx = image.shape
-        self.mask = np.zeros_like(image, dtype=bool)
-
-        self.im_high = None
-        self.im_smth = None
-        self.im_dsp = None
-        self.im_spk = None
-
-        self.fft = None
-        self.fft_masked = None
-
-        self.reconstructed = None
-
+@dataclass
+class IOConfig:
+    basename: str | None = None
+    leftonly: bool = False
+    rightonly: bool = False
+    outdir: str = "./after_rmnoise"
+    verbose: bool = False
+    no_hpf: bool = False
+    no_despike: bool = False
+    raw: bool = False
 
 
 
+# FITS I/O
 
-
-def read_fits(file):
+def read_fits(file: str):
     """Reads a FITS file and returns the image data and header."""
     with fits.open(file) as hdul:
-        data = hdul[0].data
-        header = hdul[0].header
-    return data, header
+        return hdul[0].data, hdul[0].header
 
-def write_fits(file, data, header):
+def write_fits(file: str, data, header):
     """Writes data to a FITS file with the provided header."""
     hdu = fits.ImageHDU(data, header=header)
     primary_hdu = fits.PrimaryHDU(header=header)
     hdul = fits.HDUList([primary_hdu, hdu])
     hdul.writeto(file, overwrite=True)
+
+
+# Helper function to save a numpy array as a FITS file
+def save_fits(filepath, data):
+    # logger.info("filepath: %s, length: %d", filepath, len(data))
+    if isinstance(data, list) or (isinstance(data, np.ndarray) and data.ndim == 3):
+        header=fits.Header()
+        hdu = fits.ImageHDU(data)
+        hdul = fits.HDUList([fits.PrimaryHDU(header=header), hdu])
+    else:
+        hdul = fits.HDUList([fits.PrimaryHDU(data)])
+    hdul.writeto(filepath, overwrite=True)
 
 
 
@@ -81,6 +92,7 @@ def read_fits_list(fits_list_path):
     return file_paths
 
 
+# Utilities
 
 def replace_nans(image):
     # Replace NaN values with interpolated values
@@ -148,11 +160,251 @@ def nan_gaussian_filter2(image, sigma=5.):
 
 
 
+# Preprocessing
+
+
+# High-pass filter (Gaussian-based)
+def hpfilter(image, ksize=NoiseReductionConfig.kernel_size, siglim=NoiseReductionConfig.hpf_siglim):
+    # kernel size = 3→2
+    # Create a working copy of the input image
+    imw = image.copy()
+    
+    # Initial threshold and mask bright spots
+    med = np.median(imw)
+    sig = np.nanstd(imw - med)
+    mask = np.abs(imw - med) > siglim * sig
+    count = np.count_nonzero(mask)
+    cnt_k = count
+    # logger.info("High-pass filter: %d pixels masked.", count)
+
+    while count > 0:
+        imw[mask] = np.nan
+        ims = nan_gaussian_filter(imw, sigma=ksize)
+
+        sig = np.nanstd(imw - ims)
+        mask = (imw != 0) & (np.abs(imw - ims) > siglim * sig)
+        count = np.count_nonzero(mask)
+        # logger.info("High-pass filter: %d pixels masked.", count)
+        cnt_k += count
+
+    logger.info("\nHigh-pass filter: %d pixels masked in total.", cnt_k)
+    
+    ## hpfilter 無視する場合
+#    ims = np.zeros_like(im)
+
+    imh = image - ims
+    
+    return imh, ims
 
 
 
 
-def field_peri_noise_reduction(image, mode=0, xlim=35, ylim=200, seed=None):
+# High-pass filter (Gaussian-based)
+def hpfilter2(image, siglim=NoiseReductionConfig.hpf_siglim, ksize=NoiseReductionConfig.hpf_ksize):
+    """
+    Iterative Gaussian-based high-pass filter.
+
+    Parameters
+    ----------
+    image: input 2D image
+    siglim : float; Sigma threshold for clipping
+    ksize : iterable of float; Gaussian kernel sigmas (applied iteratively)
+    
+    Returns
+    -------
+    imh: high-frequency component
+    ims: smooth/background component
+    image = imh + ims
+
+    loop with changing kernel size
+    """
+    
+    # Create a working copy of the input image
+    imw = image.copy()
+
+    # despike
+    spikes = despiker5(imw)
+    spikes_cnt = np.count_nonzero(spikes)
+
+
+    # Initial threshold and mask bright spots
+    # --- Sigma clipping ---
+    med = np.median(imw)
+    # sig = np.nanstd(imw - med)
+    sig = np.nanstd(imw)
+    mask = np.abs(imw - med) > siglim * sig
+    # count = np.count_nonzero(mask)
+    # logger.info("High-pass filter: %d pixels masked.", count)
+    
+    # Apply masks
+    if spikes_cnt > 0:
+        imw[mask] = np.nan
+
+    # Iterative smoothing
+    # Accumulator for smooth component
+    ima = np.zeros_like(imw)
+
+    # Iterative smoothing
+    for sigma in ksize:
+        ims_iter = nan_gaussian_filter(imw, sigma=sigma)
+        imw -= ims_iter
+        ima += ims_iter  # sum of removed smooth components
+
+    ## hpfilter 無視
+    # ims = np.zeros_like(im)
+
+    ims = ima
+    imh = image - ims
+    
+    return imh, ims
+
+
+
+
+
+# despike - Spike removal
+# A simple despiking function that removes spikes from an image.
+def despiker(image, sigma=NoiseReductionConfig.despike_sigma): # sigma 5→3
+    """
+    A simple despiking function that removes spikes from an image.
+
+    Parameters:
+    image : 2D numpy array
+        The input image to be despiked.
+    sigma : float, optional
+        The Gaussian width in pixels for filling the spikes. Default is 5.
+
+    Returns:
+    image_despiked : 2D numpy array
+        The image after spikes have been removed and filled.
+    image_spikes : 2D numpy array
+        The image containing only the spikes that were removed.
+    """
+    imw = image.copy()
+    
+    while True:
+        ave = np.nanmean(imw)
+        sgm = np.nanstd(imw)
+
+        # replace spikes (outliers) with NaN
+        cond = np.abs(imw - ave) > sigma * sgm
+        if not cond.any():
+            break
+        # Mark spikes in the mask and set them to NaN in the data
+        imw[cond] = np.nan
+
+    # Fill NaNs using Gaussian smoothing
+    imw_filled = replace_nans(imw)
+
+    # The despiked image is the filled working image
+    image_despiked = imw_filled
+
+    # The spikes image is the difference between the original and the despiked image
+    image_spikes = image - image_despiked
+
+    return image_despiked, image_spikes
+
+
+
+
+
+
+
+
+
+# despike - Spike removal # Type 5
+# A simple despiking function that removes spikes from an image.
+def despiker5(image, sigma=NoiseReductionConfig.despike_sigma): # sigma 5→3
+    """
+    A simple despiking function that removes spikes from an image.
+
+    Parameters:
+    image : 2D numpy array
+        The input image to be despiked.
+    sigma : float, optional
+        The Gaussian width in pixels for filling the spikes. Default is 3.
+        Threshold multiplier (default = 3).
+
+    Returns:
+    spikes : 2D numpy array (int)
+        Binary spike mask (1 = spike, 0 = normal).
+    """
+    imw = image.copy()
+    
+    # Initialize output mask
+    spikes = np.zeros(imw.shape, dtype=np.int8)
+
+    # Calculate the difference between the central pixel and the surrounding pixels in a 3x3 array.
+    # Define convolution kernel
+    kernel = np.full((3, 3), -1.0 / 8.0)
+    kernel[1, 1] = 1.0
+
+    # Convolution
+    imc = nan_gaussian_filter(imw, sigma=sigma)
+
+    # Only mask pixels that are significantly brighter than their surroundings.
+    # Compute statistics (ignore NaNs)
+    ave = np.nanmean(imc)
+    sgm = np.nanstd(imc)
+
+    # Detect positive spikes
+    # detect only positive pixels
+    mask = (imc - ave) > (sigma * sgm)
+
+    # Create spike map
+    spikes[mask] = 1
+
+    # For debugging
+    # save_fits('spikes_imw.fits', imw)
+    # save_fits('spikes_imc.fits', imc)
+    # save_fits('spikes_spk.fits', spikes)
+
+    return spikes
+
+
+# FFT utilities
+
+def mirror(im_target, shape):
+    """Mirror-pad image for FFT symmetry."""
+    # image size
+    h, w = shape
+    # Mirror and copy the data
+    # Create a new image that is 4 times the size by folding the original image with 1-pixel overlap (to obtain zero imaginary data when FFT)    
+    # Mirror and copy the data (the way to obtain zero imaginary data when FFT)
+    im4 = np.zeros((h * 2, w * 2))
+    
+    im4[1:h+1, 1:w+1] = im_target
+    im4[h:2*h, 1:w+1] = im_target[::-1, :] # Vertically mirror
+    im4[1:h+1, w:2*w] = im_target[:, ::-1] # Horizontally mirror
+    im4[h:2*h, w:2*w] = im_target[::-1, ::-1]  # Horizontal and vertical mirror
+
+    # logger.info("shape of im4: %s", im4.shape)
+    # logger.info("finite of im4: %d", np.isfinite(im4).sum())
+
+    return im4
+
+
+def mirror_reconstruct(fft_masked, shape):
+    """Reconstruct full FFT from quadrant."""
+    # image size
+    h, w = shape
+    # Refold the masked Fourier image (with 1-pixel overlap)
+    # Mirror updated far to fa
+    fa4 = np.zeros((h * 2, w * 2))
+    
+    fa4[:h+1, :w+1] = fft_masked
+    fa4[h:2*h, :w+1] = fft_masked[h+1:0:-1, :]  # Vertically mirror
+    fa4[:h+1, w:2*w] = fft_masked[:, w:0:-1]  # Horizontally mirror (with 1-pixel overlap)
+    fa4[h:2*h, w:2*w] = fft_masked[h+1:0:-1, w:0:-1]
+
+    return fa4
+
+
+# ================================
+# Noise reduction 
+# ================================
+
+def field_peri_noise_reduction(image, config: NoiseReductionConfig):
     """
     Suppress noise by scaling
 
@@ -166,7 +418,8 @@ def field_peri_noise_reduction(image, mode=0, xlim=35, ylim=200, seed=None):
     if not isinstance(image, np.ndarray) or image.ndim != 2:
         raise ValueError("Input image must be a 2D numpy array.")
 
-    dat = image.astype(float).copy()
+    # dat = image.astype(float).copy()
+    dat = np.array(image, dtype=float, copy=True)
     # Dimensions of the image  # note reversed order
     ny, nx = dat.shape
 
@@ -189,7 +442,8 @@ def field_peri_noise_reduction(image, mode=0, xlim=35, ylim=200, seed=None):
         ex = float(nx - xlim) # semi-major axis
         ey = float(ny - ylim) # semi-minor axis
         # Create a grid of coordinates
-        y, x = np.meshgrid(np.arange(ny), np.arange(nx), indexing='ij')
+        # y, x = np.meshgrid(np.arange(ny), np.arange(nx), indexing='ij')
+        y, x = np.indices((ny, nx))
         distance = ((x - nx) / ex) ** 2 + ((y - ny) / ey) ** 2
         # Create the elliptical mask (1 inside the ellipse, 0 outside)
         pct[distance <= 1.0] = True
@@ -250,21 +504,22 @@ def field_peri_noise_reduction(image, mode=0, xlim=35, ylim=200, seed=None):
         # Calculate mean and standard deviation excluding NaN values
         ave = np.nanmean(dat)
         sgm = np.nanstd(dat)
-        cond = (np.abs(dat) > pmax) & (np.abs(dat - ave) > 3.0 * sgm)
-        # cond = np.abs(dat - ave) > sgm * 3
 
         if not np.isfinite(sgm) or sgm == 0:
             break
 
-        # cnt = np.sum(cond) # the number of True
-        cnt = np.count_nonzero(cond)
-        if cnt == 0:
+        cond = (np.abs(dat) > pmax) & (np.abs(dat - ave) > 3.0 * sgm)
+        # cond = np.abs(dat - ave) > sgm * 3
+
+        if not cond.any():
             break
+    
 
         # Replace outliers with NaN and update the mask
         # Mark noisy pixels in the mask and set them to NaN in the data
         dat[cond] = np.nan
-        msk[cond] = True
+        # msk[cond] = True
+        msk |= cond
 
     # number of NaNs
     nan_n = np.count_nonzero(np.isnan(dat))    
@@ -302,8 +557,6 @@ def field_peri_noise_reduction(image, mode=0, xlim=35, ylim=200, seed=None):
 
 
 
-
-
     # 7. Restore protected region
     # Restore protected and untouched pixels
     # overwrite protected area by the original data
@@ -328,7 +581,7 @@ def field_peri_noise_reduction(image, mode=0, xlim=35, ylim=200, seed=None):
 
 
 
-def field_peri_noise_reduction_rev7(image, mode=0, xlim=35, ylim=200, seed=None):
+def field_peri_noise_reduction_rev7(image, config: NoiseReductionConfig):
     """
     Fill with Gaussian random values
 
@@ -340,6 +593,13 @@ def field_peri_noise_reduction_rev7(image, mode=0, xlim=35, ylim=200, seed=None)
     seed  : int or None (random seed)
     """
 
+    mode = config.mode
+    xlim = config.xlim
+    ylim = config.ylim
+    seed = config.seed
+
+
+
     if seed is not None:
         rng = np.random.default_rng(seed)
     else:
@@ -350,7 +610,8 @@ def field_peri_noise_reduction_rev7(image, mode=0, xlim=35, ylim=200, seed=None)
         raise ValueError("Input image must be a 2D numpy array.")
 
     # image = np.asarray(image, dtype=float)
-    dat = image.astype(float).copy()
+    # dat = image.astype(float).copy()
+    dat = np.array(image, dtype=float, copy=True)
     # Dimensions of the image  # note reversed order
     ny, nx = dat.shape
 
@@ -478,12 +739,8 @@ def field_peri_noise_reduction_rev7(image, mode=0, xlim=35, ylim=200, seed=None)
     y_indices = fill_idx[0]
     # y_indices, x_indices = fill_idx
     noise = rng.standard_normal(len(y_indices))
-
-    dat[fill_idx] = (
-        ave_y[y_indices] +
-        noise * sgm_y[y_indices]
-    )
-
+    # sgm_y = np.maximum(sgm_y, 1e-6)
+    dat[fill_idx] = ave_y[y_indices] + noise * sgm_y[y_indices]
 
     # 7. Restore protected region
     # Restore protected and untouched pixels
@@ -504,232 +761,65 @@ def field_peri_noise_reduction_rev7(image, mode=0, xlim=35, ylim=200, seed=None)
 
 
 
+# Region handling
+
+def extract_regions(im_target: np.ndarray) -> Dict[str, Tuple[np.ndarray, Tuple]]:
+    """Extract LEFT and RIGHT detector regions."""
+    y = slice(3, 303)
+
+    return {
+        "LEFT": (im_target[y, 6:64].copy(), (y, slice(6, 64))),
+        "RIGHT": (im_target[y, 69:127].copy(), (y, slice(69, 127))),
+    }
 
 
+# ======================================
+# Core pipeline
+# ======================================
 
-# High-pass filter (Gaussian-based)
-def hpfilter(image, ksize=2, siglim=3.0):
-    # kernel size = 3→2
-    # Create a working copy of the input image
-    imw = image.copy()
-    
-    # Initial threshold and mask bright spots
-    med = np.median(imw)
-    sig = np.nanstd(imw - med)
-    mask = np.abs(imw - med) > siglim * sig
-    count = np.count_nonzero(mask)
-    cnt_k = count
-    # logger.info("High-pass filter: %d pixels masked.", count)
-
-    while count > 0:
-        imw[mask] = np.nan
-        ims = nan_gaussian_filter(imw, sigma=ksize)
-
-        sig = np.nanstd(imw - ims)
-        mask = (imw != 0) & (np.abs(imw - ims) > siglim * sig)
-        count = np.count_nonzero(mask)
-        # logger.info("High-pass filter: %d pixels masked.", count)
-        cnt_k += count
-
-    logger.info("\nHigh-pass filter: %d pixels masked in total.", cnt_k)
-    
-    ## hpfilter 無視する場合
-#    ims = np.zeros_like(im)
-
-    imh = image - ims
-    
-    return imh, ims
-
-
-
-
-# High-pass filter (Gaussian-based)
-def hpfilter2(image, siglim=3.0, ksize=(2.0, 1.0)):
-# def hpfilter2(image, ksize=2, siglim=3.0):  # kernel size = 3→2
-    """
-    # iterative high-pass filter
-    # im: input 2D image
-    # imh: high-frequency component
-    # ims: smooth/background component
-    # im = imh + ims
-    # loop with changing kernel size
-    """
-    
-    # Create a working copy of the input image
-    imw = image.copy()
-
-    # despike
-    spikes = despiker5(imw)
-    idx = np.where(spikes == 1)
-    spikes_cnt = np.count_nonzero(spikes)
-
-
-    # Initial threshold and mask bright spots
-    # --- Sigma clipping ---
-    med = np.median(imw)
-    sig = np.nanstd(imw - med)
-    mask = np.abs(imw - med) > siglim * sig
-    count = np.count_nonzero(mask)
-    cnt_k = count
-    # logger.info("High-pass filter: %d pixels masked.", count)
-    
-    if spikes_cnt > 0:
-        imw[mask] = np.nan
-    
-    ksize=(2.0, 1.0)
-
-    # Accumulator for smooth component
-    ima = np.zeros_like(imw)
-
-    # Iterative smoothing
-    for sigma in ksize:
-        ims_iter = nan_gaussian_filter(imw, sigma=sigma)
-        imw -= ims_iter
-        ima += ims_iter  # sum of removed smooth components
-
-    ## hpfilter 無視
-    # ims = np.zeros_like(im)
-
-    ims = ima
-    imh = image - ims
-    
-    return imh, ims
-
-
-
-
-
-# despike - Spike removal
-# A simple despiking function that removes spikes from an image.
-def despiker(image, sigma=3): # sigma 5→3
-    """
-    A simple despiking function that removes spikes from an image.
-
-    Parameters:
-    image : 2D numpy array
-        The input image to be despiked.
-    sigma : float, optional
-        The Gaussian width in pixels for filling the spikes. Default is 5.
-
-    Returns:
-    image_despiked : 2D numpy array
-        The image after spikes have been removed and filled.
-    image_spikes : 2D numpy array
-        The image containing only the spikes that were removed.
-    """
-    imw = image.copy()
-    
-    while True:
-        ave = np.nanmean(imw)
-        sgm = np.nanstd(imw)
-
-        # replace spikes (outliers) with NaN
-        cond = np.abs(imw - ave) > sigma * sgm
-        if not cond.any():
-            break
-        # Mark spikes in the mask and set them to NaN in the data
-        imw[cond] = np.nan
-
-    # Fill NaNs using Gaussian smoothing
-    imw_filled = replace_nans(imw)
-
-    # The despiked image is the filled working image
-    image_despiked = imw_filled
-
-    # The spikes image is the difference between the original and the despiked image
-    image_spikes = image - image_despiked
-
-    return image_despiked, image_spikes
-
-
-
-
-
-
-
-
-
-# despike - Spike removal # Type 5
-# A simple despiking function that removes spikes from an image.
-def despiker5(image, sigma=3): # sigma 5→3
-    """
-    A simple despiking function that removes spikes from an image.
-
-    Parameters:
-    image : 2D numpy array
-        The input image to be despiked.
-    sigma : float, optional
-        The Gaussian width in pixels for filling the spikes. Default is 3.
-        Threshold multiplier (default = 3).
-
-    Returns:
-    spikes : 2D numpy array (int)
-        Binary spike mask (1 = spike, 0 = normal).
-    """
-    imw = image.copy()
-    
-    # Initialize output mask
-    spikes = np.zeros(imw.shape, dtype=np.int8)
-
-    # Calculate the difference between the central pixel and the surrounding pixels in a 3x3 array.
-    # Define convolution kernel
-    kernel = np.full((3, 3), -1.0 / 8.0)
-    kernel[1, 1] = 1.0
-
-    # Convolution
-    imc = nan_gaussian_filter(imw, sigma=sigma)
-
-    # Only mask pixels that are significantly brighter than their surroundings.
-    # Compute statistics (ignore NaNs)
-    ave = np.nanmean(imc)
-    sgm = np.nanstd(imc)
-
-    # Detect positive spikes
-    # detect only positive pixels
-    mask = (imc - ave) > (sigma * sgm)
-
-    # Create spike map
-    spikes[mask] = 1
-
-    # For debugging
-    # save_fits('spikes_imw.fits', imw)
-    # save_fits('spikes_imc.fits', imc)
-    # save_fits('spikes_spk.fits', spikes)
-
-    return spikes
-
-
-
-
-
-
-def tanzaku_noise_reduction(image, leftright, basename=None, outdir='./', verbose=False, no_hpf=False, no_despike=False):
-    # PRESERVE=preserve ? # IDL
-    """Perform noise reduction on a tanzaku image."""
+def tanzaku_noise_reduction(
+    image, left_right, basename, config: NoiseReductionConfig, io: IOConfig) -> None:
+    """Process a single region. 
+    Process the first and second lines of the tanzaku separately.
+    Perform noise reduction on a tanzaku image."""
     start_time = time.process_time()
 
-    # preserve=None
+    # Create a config instance
+    config = NoiseReductionConfig()
+    io = IOConfig()
+
+    outdir =  io.outdir
+    verbose = io.verbose
+    no_hpf = io.no_hpf
+    no_despike = io.no_despike
 
     if basename is None:
         verbose = False
-    if not os.path.exists(outdir):
-        os.makedirs(outdir)
+
+    os.makedirs(outdir, exist_ok=True)
     
-    lr = '_L' if leftright == 'LEFT' else '_R' if leftright == 'RIGHT' else ''
-    if lr == '':
-        print('leftright should be LEFT or RIGHT.')
-        return
+
+    # Process LEFT (row1) or RIGHT (row2) region in-place.
+    assert left_right in ("LEFT", "RIGHT")
     
+    # Region selection
     # Extract target region
-    if leftright == "LEFT":
+    if left_right == "LEFT":
         xran = np.array([0, 58]) + 6
-    elif leftright == "RIGHT":
-        xran = np.array([0, 58]) + 69
+        lr = "_L"
     else:
-        raise ValueError("leftright must be LEFT or RIGHT")        
+        xran = np.array([0, 58]) + 69
+        lr = "_R"
+     
     yran = np.array([0, 300]) + 3
     im_target = image[yran[0]:yran[1], xran[0]:xran[1]].copy()
     
+
+
+    # extract_regions()
+
+
+
     # High-pass filtering
     if not no_hpf:
         # im_high, im_smth = hpfilter(im_target)
@@ -754,22 +844,10 @@ def tanzaku_noise_reduction(image, leftright, basename=None, outdir='./', verbos
         im_spk = np.zeros_like(im_target)
     
     # Get the image size
-    h, w = im_target.shape
+    shape = im_target.shape
 
     # Mirror and copy the data
-    # Create a new image that is 4 times the size by folding the original image with 1-pixel overlap (to obtain zero imaginary data when FFT)    
-    # Mirror and copy the data (the way to obtain zero imaginary data when FFT)
-    im4 = np.zeros((h * 2, w * 2))
-    
-    im4[1:h+1, 1:w+1] = im_target
-    im4[h:2*h, 1:w+1] = im_target[::-1, :] # Vertically mirror
-    im4[1:h+1, w:2*w] = im_target[:, ::-1] # Horizontally mirror
-    im4[h:2*h, w:2*w] = im_target[::-1, ::-1]  # Horizontal and vertical mirror
-
-    # logger.info("shape of im4: %s", im4.shape)
-    # logger.info("finite of im4: %d", np.isfinite(im4).sum())
-
-    folded_image = im4
+    folded_image = mirror(im_target, shape)
 
 
     if verbose:
@@ -783,6 +861,7 @@ def tanzaku_noise_reduction(image, leftright, basename=None, outdir='./', verbos
     
     # Perform 2D FFT
     fft_image = fftshift(fft2(folded_image))
+    # fft_image = fftshift(fft2(folded_image, workers=-1))
     #  check if imaginary is small
     logger.info('Total imaginary component (prc) is %s', np.sum(np.abs(np.imag(fft_image))))
     
@@ -799,7 +878,7 @@ def tanzaku_noise_reduction(image, leftright, basename=None, outdir='./', verbos
     
 
     # Extract the left top region in Fourier space (original image's size)
-    fft_image_o = fft_image[0:h+1, 0:w+1]  # ← Add one more to overlap the central axis section. 軸合わせのため1つ多め
+    fft_image_o = fft_image[0:shape[0]+1, 0:shape[1]+1]  # ← Add one more to overlap the central axis section. 軸合わせのため1つ多め
     # Apply a noise reduction filter
     real_fft = np.real(fft_image_o)
     if verbose:
@@ -819,8 +898,8 @@ def tanzaku_noise_reduction(image, leftright, basename=None, outdir='./', verbos
     '''
     # fft_masked, mask_area = field_peri_noise_reduction(real_fft)
     # fft_masked, mask_area = field_peri_noise_reduction_rev7(real_fft, mode=2, xlim=preserve[0], ylim==preserve[1])
-    # fft_masked, mask_area = field_peri_noise_reduction_rev7(real_fft, mode=2)
-    fft_masked, mask_area = field_peri_noise_reduction(real_fft, mode=2)
+    fft_masked, mask_area = field_peri_noise_reduction_rev7(real_fft, config)
+    # fft_masked, mask_area = field_peri_noise_reduction(real_fft, mode=2)
 
 
     if verbose:
@@ -832,15 +911,8 @@ def tanzaku_noise_reduction(image, leftright, basename=None, outdir='./', verbos
 
 
     # Refold the masked Fourier image (with 1-pixel overlap)
-    # Mirror updated far to fa
-    fa4 = np.zeros((h * 2, w * 2))
-    
-    fa4[0:h+1, 0:w+1] = fft_masked
-    fa4[h:2*h, 0:w+1] = fft_masked[h+1:0:-1, :]  # Vertically mirror
-    fa4[0:h+1, w:2*w] = fft_masked[:, w:0:-1]  # Horizontally mirror (with 1-pixel overlap)
-    fa4[h:2*h, w:2*w] = fft_masked[h+1:0:-1, w:0:-1]
-
-    folded_fft_masked = fa4
+    # Mirror updated fft_masked to folded_fft_masked
+    folded_fft_masked = mirror_reconstruct(fft_masked, shape)
     
 
     if verbose:
@@ -879,7 +951,7 @@ def tanzaku_noise_reduction(image, leftright, basename=None, outdir='./', verbos
     logger.info("Output image StdDev = %s", sgm)
     
     # Cut to original size
-    reconstructed_image_o = reconstructed_image[1:h+1, 1:w+1]
+    reconstructed_image_o = reconstructed_image[1:shape[0]+1, 1:shape[1]+1]
 
     # Recover removed smooth component and spikes
     reconstructed_image_o += im_spk + im_smth
@@ -897,25 +969,29 @@ def tanzaku_noise_reduction(image, leftright, basename=None, outdir='./', verbos
 
 
 
-# Helper function to save a numpy array as a FITS file
-def save_fits(filepath, data):
-    # logger.info("filepath: %s, length: %d", filepath, len(data))
-    if isinstance(data, list) or (isinstance(data, np.ndarray) and data.ndim == 3):
-        header=fits.Header()
-        hdu = fits.ImageHDU(data)
-        hdul = fits.HDUList([fits.PrimaryHDU(header=header), hdu])
-    else:
-        hdul = fits.HDUList([fits.PrimaryHDU(data)])
-    hdul.writeto(filepath, overwrite=True)
-
 
 
 # Main routine
+# Entry points
 
-def tanzakurmnoise2d(file, leftonly=False, rightonly=False, outdir='./', verbose=False, nodespike=False, nohpf=False, raw=False):
-    # PRESERVE=preserve
-    """Perform noise reduction and processing on a tanzaku image."""
+def tanzaku_rmnoise_2d(file, config: NoiseReductionConfig, io: IOConfig):
+    """
+    Main processing function.
+    Perform noise reduction and processing on a tanzaku image.
+    """
     start_time = time.process_time()
+
+    config = NoiseReductionConfig()
+    io = IOConfig()
+
+    leftonly = io.leftonly
+    rightonly = io.rightonly
+    outdir = io.outdir
+    verbose = io.verbose
+    no_hpf = io.no_hpf
+    no_despike = io.no_despike
+    raw = io.raw
+
 
     if 'outdir' not in locals():
         outdir = './'
@@ -941,7 +1017,6 @@ def tanzakurmnoise2d(file, leftonly=False, rightonly=False, outdir='./', verbose
     
     # Perform differentiation
     if raw:
-#    if 'raw' in locals() and raw:
         im0[:, 0] = 0
         imd = im0 - np.roll(im0, shift=1, axis=1)
         imd[:, 0:2] = 0
@@ -950,27 +1025,21 @@ def tanzakurmnoise2d(file, leftonly=False, rightonly=False, outdir='./', verbose
 
     imd_org = imd.copy()
     
-    
-    # Setting flags
-#    verbose = 1 if 'verbose' in locals() and verbose else 0
-#    nohpf = 1 if 'nohpf' in locals() and nohpf else 0
-#    nodespike = 1 if 'nodespike' in locals() and nodespike else 0
-    
-    # Apply noise reduction for LEFT and RIGHT if applicable
-#    if 'rightonly' not in locals():
-    if not rightonly:
+
+    # Process regions (left and right)
+    # Apply noise reduction for LEFT (row1) and RIGHT (row2) if applicable
+    if not io.rightonly:
         # logger.info('Processing LEFT of %s', file)
-        tanzaku_noise_reduction(imd, 'LEFT', basename=basename, outdir=outdir, verbose=verbose, no_hpf=nohpf, no_despike=nodespike)
+        tanzaku_noise_reduction(imd, 'LEFT', basename=basename, config=config, io=io)
         # tanzaku_noise_reduction(imd, 'LEFT', basename=basename, outdir=outdir, verbose=verbose, no_hpf=nohpf, no_despike=nodespike, preserve=preserve)
-#    if 'leftonly' not in locals():
-    if not leftonly:
+    if not io.leftonly:
         # logger.info('Processing RIGHT of %s', file)
-        tanzaku_noise_reduction(imd, 'RIGHT', basename=basename, outdir=outdir, verbose=verbose, no_hpf=nohpf, no_despike=nodespike)
+        tanzaku_noise_reduction(imd, 'RIGHT', basename=basename, config=config, io=io)
         # tanzaku_noise_reduction(imd, 'RIGHT', basename=basename, outdir=outdir, verbose=verbose, no_hpf=nohpf, no_despike=nodespike, preserve=preserve)
 
+    # Integrate back
     # Integrating to reconstruct the original form
     if raw:
-#    if 'raw' in locals() and raw:
         imd[:, 0] = 0
         imi = np.cumsum(imd, axis=1)
         imo = imi.copy()
@@ -1004,11 +1073,13 @@ def tanzakurmnoise2d(file, leftonly=False, rightonly=False, outdir='./', verbose
 
 
 def rmnoise_list(fits_list_path):    
+    """ Batch processing. """
     input_files = read_fits_list(fits_list_path)
     for f in input_files:
         file = f + '.fits'
         # tanzakurmnoise2d(file, leftonly=False, rightonly=False, outdir='./after_rmnoise', verbose=True, nodespike=False, nohpf=False, raw=False)
-        tanzakurmnoise2d(file, leftonly=False, rightonly=False, outdir='./after_rmnoise', verbose=False, nodespike=False, nohpf=False, raw=False)
+        # tanzakurmnoise2d(file, leftonly=False, rightonly=False, outdir='./after_rmnoise', verbose=False, nodespike=False, nohpf=False, raw=False)
+        tanzaku_rmnoise_2d(file, config = NoiseReductionConfig(), io = IOConfig())
 
 
 
