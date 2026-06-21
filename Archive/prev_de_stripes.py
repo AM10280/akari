@@ -134,7 +134,6 @@ def plot_profile(profile_x, season, outdir='./profile_ave'):
     # plt.ylim(-16.2, 7)
     # plt.ylim(0, 225)
     # plt.ylim(0, 250)
-    plt.ylim(0, 350)
     # plt.ylim(-34, 11) # average, each 2 rows
     plt.xlabel('Pixel (X-direction)')
     plt.ylabel('Power')
@@ -159,7 +158,7 @@ def plot_profile_diff(profile_x, season, outdir='./profile_ave_diff'):
     # plt.plot(median_profile, label='Median Profile', color='r', alpha=0.7)
     # plt.ylim(-16.2, 7)
     # plt.ylim(0, 225)
-    plt.ylim(-34, 12) # average, each 2 rows
+    plt.ylim(-34, 11) # average, each 2 rows
     plt.xlabel('Pixel (X-direction)')
     plt.ylabel('Power')
     plt.title('Average Profiles')
