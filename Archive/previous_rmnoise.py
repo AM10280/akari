@@ -777,6 +777,13 @@ def field_peri_noise_reduction_rev7(image, mode=0, xlim=35, ylim=200, seed=None)
 
     ave_y = np.nanmean(dat, axis=1)
     sgm_y = np.nanstd(dat, axis=1)
+    # print("s/a: ", sgm_y[230] / ave_y[230])
+    # for i in range(0, 300):
+    #     ave_y[i] = np.nanmean(dat[i, :])
+    #     sgm_y[i] = np.nanstd(dat[i, :])
+    #     print("s/a: ",i,  sgm_y[i] / ave_y[i])
+    # print("ave_y: ", ave_y.shape)
+    # print("sgm_y: ", sgm_y.shape)
     # print("The number of NaNs (ave_y) :", np.count_nonzero(np.isnan(ave_y)))
     # print("The number of NaNs (sgm_y) :", np.count_nonzero(np.isnan(sgm_y)))
     # ave = np.nanmean(dat, axis=1)
@@ -809,6 +816,7 @@ def field_peri_noise_reduction_rev7(image, mode=0, xlim=35, ylim=200, seed=None)
         ave_y[y_indices] +
         noise * sgm_y[y_indices]
     )
+    # dat[fill_idx] = 0.0
 
     # rows = idx // nx  # Flattened index / nx = row number
     # dat_flat[idx] = ave[rows] + np.random.randn(cnt) * sgm[rows]
@@ -1147,8 +1155,8 @@ def tanzaku_noise_reduction(image, leftright, basename=None, outdir='./', verbos
     if not no_despike:
         im_dsp, im_spk = despiker(im_target)
         if verbose:
-            save_fits(os.path.join(outdir, basename + '_dsp' + lr + '.fits'), [im_dsp, im_spk])
-            # save_fits(os.path.join(outdir, basename + '_dsp' + lr + '.fits'), np.hstack([im_dsp, im_spk]))
+            # save_fits(os.path.join(outdir, basename + '_dsp' + lr + '.fits'), [im_dsp, im_spk])
+            save_fits(os.path.join(outdir, basename + '_dsp' + lr + '.fits'), np.hstack([im_dsp, im_spk]))
         im_target = im_dsp
     else: 
         im_dsp = im_target
