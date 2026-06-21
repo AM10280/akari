@@ -1,12 +1,10 @@
 import sys
 import numpy as np
-import pandas as pd
 #from scipy.fft import fft2, fftshift
 from scipy.fft import fft2, ifft2, fftshift, ifftshift
 # from scipy.signal import butter, filtfilt, fftconvolve
-# from scipy.signal import convolve as scipy_convolve
-from scipy.ndimage import uniform_filter, gaussian_filter
-# from scipy.ndimage import uniform_filter, generic_filter, gaussian_filter
+from scipy.signal import convolve as scipy_convolve
+from scipy.ndimage import uniform_filter, generic_filter, gaussian_filter
 # from scipy.ndimage import convolve
 from scipy import stats
 from astropy.io import fits
@@ -40,6 +38,36 @@ def write_fits(file, data, header):
 
 
 
+
+# derive stddev of non-signal region.
+def field_sigma(image, output_path='output/test.fits'):
+    # Copy the image to a local variable
+    dat = np.copy(image)
+    
+    # Repeat until no more outliers are found
+    while True:
+        ave = np.nanmean(dat)  # Calculate the mean, ignoring NaNs
+        sgm = np.nanstd(dat)   # Calculate the standard deviation, ignoring NaNs
+        
+        # Identify outliers (more than 3 sigma away from the mean)
+        outliers = np.abs(dat - ave) > 3 * sgm
+        
+        # Count the number of outliers
+        cnt = np.sum(outliers)
+        
+        if cnt == 0:
+            break  # Exit the loop if no more outliers are found
+        
+        # Replace outliers with NaN
+        dat[outliers] = np.nan
+    
+    # Write the cleaned data to a FITS file
+    fits.writeto(output_path, dat, overwrite=True)
+
+    return ave, sgm    
+
+
+
 def replace_nans0(image, stddev):
     # Replace NaN values with interpolated values
     kernel = Gaussian2DKernel(stddev)
@@ -51,12 +79,12 @@ def replace_nans0(image, stddev):
 def replace_nans(image, stddev):
     # Replace NaN values with interpolated values
         stddev = 1.0
-        max_iterations = 10
+        max_iterations = 20
         iteration = 0
 
         # use this for the scipy convolution
-        # img_zerod = image.copy()
-        # img_zerod[np.isnan(image)] = 0
+        img_zerod = image.copy()
+        img_zerod[np.isnan(image)] = 0
 
         while iteration < max_iterations:
             kernel = Gaussian2DKernel(stddev, stddev)
@@ -74,31 +102,17 @@ def replace_nans(image, stddev):
             print(f"Interpolated by a Gaussian 2D kernel with the stddev of {stddev}")
         return image
 
+
 def nan_box2_filter(image, width):
-# def nan_box2_filter_astropy(image, width):
-    kernel = Box2DKernel(width=width)
-    smoothed_data = convolve(image, kernel, boundary='extend', nan_treatment='interpolate')
-    return smoothed_data
+   kernel = Box2DKernel(width=width)
+   smoothed_data = convolve(image, kernel, boundary='extend', nan_treatment='interpolate')
+   return smoothed_data
 
 
-    # astropy
 def nan_gaussian_filter(image, sigma):
-    kernel = Gaussian2DKernel(x_stddev=sigma)
-    # smoothed_data = scipy_convolve(image, kernel, mode='full', method='auto')
-    smoothed_data = convolve(image, kernel, boundary='extend', nan_treatment='interpolate')
-    return smoothed_data
-
-# def nan_gaussian_filter(image, sigma):
-def nan_gaussian_filter_pandas(image, sigma):
-    # Convert to DataFrame
-    df = pd.DataFrame(image)
-    # Interpolate NaNs
-    df_interpolated = df.interpolate(method='nearest', axis=0).interpolate(method='nearest', axis=1)
-    # Apply Gaussian Filter using DataFrame's applymap method
-    filtered_image = df_interpolated.applymap(lambda x: gaussian_filter(x, sigma=sigma, mode='nearest'))
-    # Convert DataFrame to NumPy array
-    smoothed_data = filtered_image.to_numpy()
-    return smoothed_data
+   kernel = Gaussian2DKernel(x_stddev=sigma)
+   smoothed_data = convolve(image, kernel, boundary='extend', nan_treatment='interpolate')
+   return smoothed_data
 
 
 
@@ -146,6 +160,9 @@ def gauss_fill(image, sigma=5):
 
 
 
+
+
+
 # derive stddev of non-signal region.
 def field_peri_noise_reduction(image, yrange=250):
 
@@ -153,43 +170,34 @@ def field_peri_noise_reduction(image, yrange=250):
     dat = image[:, 0:yrange].copy()
     
     # Initialize a mask
-    # msk = np.zeros(dat.shape, dtype=int)
+    msk = np.zeros(dat.shape, dtype=int)
     
     while True:
         # Calculate mean and standard deviation, ignoring NaNs
         ave = np.nanmean(dat)
         sgm = np.nanstd(dat)
         cond = np.abs(dat - ave) > sgm * 3     ## find mask regions
-        # cnt = np.sum(cond)
-        cnt = np.count_nonzero(cond)
+        cnt = np.sum(cond)
+#        print(cnt, c)
         if cnt > 0:
             # Mark noisy pixels in the mask and set them to NaN in the data
             # dat[cond] = np.nan
             dat = np.where(cond, np.nan, dat)
-            # msk = np.where(cond, 1, msk)
+            msk = np.where(cond, 1, msk)
             # img_zerod = img.copy()
             # img_zerod[np.isnan(img)] = 0
         else:
             break
     
     # Separate noisy and normal pixels
-    # nan_n = np.isnan(msk).sum()
-    # nan_n = np.count_nonzero(np.isnan(dat))
-    nan_n = np.isnan(dat).sum()
-    # idx = np.where(msk == 1)
-    idx = np.where(np.isnan(dat))[0] # NaN index
-    # cidx = np.where(msk == 0)
-    cidx = np.where(~np.isnan(dat))[0] # Not NaN index
+    idx = np.where(msk == 1)
+    cidx = np.where(msk == 0)
     
     # If there are no noisy or normal pixels, exit
-    # if len(idx[0]) == 0 or len(cidx[0]) == 0:
-    # if np.isnan(msk).sum() == 0:
-    if nan_n == 0:
+    if len(idx[0]) == 0 or len(cidx[0]) == 0:
         return
     
-    # print(f'FieldPeriNoiseReduction: {len(idx[0])} pixels are processed.')
-    print(f'FieldPeriNoiseReduction: {nan_n} pixels are processed.')
-
+    print(f'FieldPeriNoiseReduction: {len(idx[0])} pixels are processed.')
     
     # Recalculate the data from the original image ←important
     dat = image[:, 0:yrange].copy()
@@ -221,34 +229,22 @@ def hpfilter(im, ksize=3.0, siglim=3.0):
     med = np.median(imw)
     sig = np.nanstd(imw - med)
     cond = np.abs(imw - med) > siglim * sig
-    count = np.count_nonzero(cond)
-    # cnt_k = count
-
-    while True:
-        med = np.nanmedian(imw)
-        sig = np.nanstd(imw - med)
-        cond = np.abs(imw - med) > siglim * sig
-        # count = np.sum(cond)
-        count = np.count_nonzero(cond)
-        if count > 0:
-            imw[cond] = np.nan
-            # imw = np.where(cond, np.nan, imw)
-            # ims = uniform_filter(np.nan_to_num(imw), size=int(ksize))
-#           ims = generic_filter(imw, np.nanmean, size=ksize, mode='constant', cval=np.nan)
-            ims = gaussian_filter(np.nan_to_num(imw), sigma=ksize, mode='nearest')
-            # ims = nan_box2_filter(imw, width=ksize)
-#           ims = nan_gaussian_filter(imw, sigma=ksize)
-#           ims = replace_nans(imw, stddev=ksize)
-        else:
-            break
-
-    # nan_n = np.isnan(imw).sum()
-    nan_n = np.count_nonzero(np.isnan(imw))
-    if nan_n == 0:
-        return
-        
-    # print(f'hpfilter: {cnt_k} pixels masked in total.')
-    print(f'hpfilter: {nan_n} pixels masked in total.')
+    idx = np.where(np.abs(imw - med) > siglim * sig)
+    cnt_k = len(idx[0])
+    count = np.sum(np.abs(imw - med) > siglim * sig)
+    while len(idx[0]) > 0:
+#    while count > 0:
+        imw[idx] = np.nan
+        # ims = uniform_filter(np.nan_to_num(imw), size=int(ksize))
+#        ims = generic_filter(imw, np.nanmean, size=ksize, mode='constant', cval=np.nan)
+#        ims = gaussian_filter(np.nan_to_num(imw), sigma=ksize, mode='nearest')
+        # ims = nan_box2_filter(imw, width=ksize)
+        ims = nan_gaussian_filter(imw, sigma=ksize)
+        sig = np.nanstd(imw - ims)
+        idx = np.where(np.abs(imw - ims) > siglim * sig)
+        cnt_k += len(idx[0])
+#        count = np.sum(np.abs(imw - med) > siglim * sig)
+    print(f'hpfilter: {cnt_k} pixels masked in total.')
     
     ## hpfilter 無視
 #    ims = np.zeros_like(im)
@@ -259,13 +255,26 @@ def hpfilter(im, ksize=3.0, siglim=3.0):
 
 
 
-
 # A simple despiking function that removes spikes from an image.
 
 def despiker3(image, sigma=5):
-    imw = np.copy(image)
-    # msk = np.zeros_like(imw, dtype=int)
+    """
+    A simple despiking function that removes spikes from an image.
 
+    Parameters:
+    image : 2D numpy array
+        The input image to be despiked.
+    sigma : float, optional
+        The Gaussian width in pixels for filling the spikes. Default is 5.
+
+    Returns:
+    image_despiked : 2D numpy array
+        The image after spikes have been removed and filled.
+    image_spikes : 2D numpy array
+        The image containing only the spikes that were removed.
+    """
+    imw = np.copy(image)
+    
     while True:
         ave = np.nanmean(imw)
         sgm = np.nanstd(imw)
@@ -276,7 +285,6 @@ def despiker3(image, sigma=5):
         if cnt > 0:
             # Mark spikes in the mask and set them to NaN in the data
             imw = np.where(cond, np.nan, imw)
-            # msk = np.where(cond, 1, msk)
         else:
             break
 
@@ -284,7 +292,6 @@ def despiker3(image, sigma=5):
 #    imw_filled = replace_nans(imw, sigma)
     imw_filled = gauss_fill(imw, sigma)
 #    imw_filled = gaussian_filter(imw, sigma=sigma, mode='nearest')
-    # imw_filled = nan_gaussian_filter(imw, sigma=sigma)
 
     # The despiked image is the filled working image
     image_despiked = imw_filled
@@ -321,7 +328,7 @@ def tanzaku_noise_reduction(image, leftright, basename=None, outdir='./', verbos
     if not no_hpf:
         im_high, im_smth = hpfilter(im_target)
         if verbose and basename:
-            # im_save = im_high.copy()
+            im_save = im_high.copy()
 #            save_fits(os.path.join(outdir, basename + '_hpf' + lr + '.fits'), [im_high, im_smth])
 #            save_fits(os.path.join(outdir, basename + '_hpf' + lr + '.fits'), im_save.extend(im_smth))
             save_fits(os.path.join(outdir, basename + '_hpf' + lr + '.fits'), np.hstack([im_high, im_smth]))
@@ -334,7 +341,7 @@ def tanzaku_noise_reduction(image, leftright, basename=None, outdir='./', verbos
     if not no_despike:
         im_dsp, im_spk = despiker3(im_target)
         if verbose and basename:
-            # save_fits(os.path.join(outdir, basename + '_dsp' + lr + '.fits'), [im_dsp, im_spk])
+            save_fits(os.path.join(outdir, basename + '_dsp' + lr + '.fits'), [im_dsp, im_spk])
             save_fits(os.path.join(outdir, basename + '_dsp' + lr + '.fits'), np.hstack([im_dsp, im_spk]))
         im_target = im_dsp
     else:
