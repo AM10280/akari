@@ -1,7 +1,9 @@
 #自動でノイズ範囲を決定→マスク（高速）
 import sys
 import numpy as np
-import astropy.io.fits as fits
+from astropy.io import fits
+# from astropy.convolution import convolve, convolve_fft
+from astropy.convolution import Gaussian2DKernel, interpolate_replace_nans
 import matplotlib.pyplot as plt
 import statistics
 import statsmodels.api as sm
@@ -14,7 +16,7 @@ import os
 import time
 import bottleneck as bn
 
-time1 = time.time()
+#time0 = time.time()
 
 YES,NO = (1,0)
 pltave=NO   # サンプルをプロットする際に平均をプロットするか
@@ -29,13 +31,22 @@ class Ycut:
         self.gx   = np.arange(0,ny)                  # gx[ny]  X軸用
         self.ave  = np.zeros(ny, dtype=complex)      # ave[ny] 平均
 
+
+# Read the list of FITS files
+def read_fits_list(fits_list_path):
+    with open(fits_list_path, 'r') as file:
+        file_path = file.read().splitlines()
+#        fitsname = os.path.basename(file_path)
+    print(file_path)
+    return file_path
+
 # FITSを読み込んで二次元配列 data[][] に格納する
 def data_from_fits(fname):
     hdulist = fits.open(fname)
     hdu  = hdulist[0]
     data = hdu.data
     header = hdu.header
-    print(header[17])
+#    print(header[17])
     return(data, header)
 
 # data[y][x]→ ycut.data[x][y-offy]
@@ -47,55 +58,43 @@ def data_flip_xy(data, offy):
             ycut.data[x][y] = complex(data[y+offy][x], 0)
     return(ycut)
 
-# ある領域のヒストグラムを書く
-def imhist(data, x1,x2, y1,y2, bins):
-    num = (x2-x1+1)*(y2-y1+1)
-    arr = np.zeros(num)
-    i=0;
-    for y in range(y1-1, y2):
-        for x in range(x1-1, x2):
-            arr[i] = data[y][x]
-            i += 1
-    plt.title('histogram of sky')
-    plt.xlabel('ADU')
-    plt.ylabel('quantity')
-    plt.hist(arr, bins=bins)
-    plt.show()
-    return()
-
-##fits画像の青い部分を抜いたヒストグラムを画く
-def data_all(data, i):
-    alldata = []
-    for i in range (0, 127):
-        if i == (0,1,2,3,4,5,64,65,66,67,68):
-            i += 1
-        else:
-            alldata.append(data[i])
-            i += 1
-    #plt.xlim(-200,600)
-    plt.hist(alldata,histtype='barstacked',bins = 400)
-    plt.show()
-    return()
-
-#天体(over400)の情報を抜く
+# 天体(over and on median *3 )の情報を抜く
 def escape_star(ycut,data,xlim1,xlim2, ylim1,ylim2):
-    ave,std = imstat(data, 10,50, 50,250)
+#    ave,std = imstat(data, 10,50, 50,250)
+    med = np.median(data) #to be updated 04/19/2024
+#    print(med)
     nx,ny = (ycut.nx, ycut.ny)
     yescape = Ycut(nx,ny)
     for x in range(xlim1, xlim2):
         for y in range(ylim1, ylim2):
-            if ycut.data[x][y] >= 400:
+            if ycut.data[x][y] >= med * 3:
                 yescape.data[x][y] = ycut.data[x][y]
-                ycut.data[x][y] = ave
+                ycut.data[x][y] = np.nan
             else:
                 yescape.data[x][y] = 0
     for x in range(xlim1+63, xlim2+63):
         for y in range(ylim1, ylim2):
-            if ycut.data[x][y] >= 400:
+            if ycut.data[x][y] >= med * 3:
                 yescape.data[x][y] = ycut.data[x][y]
-                ycut.data[x][y] = ave
+                ycut.data[x][y] = np.nan
             else:
                 yescape.data[x][y] = 0
+# Replace NaN values with interpolated values
+    stddev = 1.0
+    max_iterations = 5
+    iteration = 0
+
+    while iteration < max_iterations:
+        kernel = Gaussian2DKernel(stddev)
+        ycut.data = interpolate_replace_nans(ycut.data, kernel)
+
+        if np.isnan(ycut.data).sum() == 0:
+            break
+        stddev += 1
+        iteration += 1
+        ycut.data = ycut.data
+#    if iteration < max_iterations:
+#        print(f"Interpolated by a Gaussian 2D kernel with the stddev of {stddev}")
 
     return(ycut,yescape)
 
@@ -112,7 +111,8 @@ def rm_noise_6data(yf,msk_range, xlim1, xlim2):
     for x in range(xlim1,xlim2):
         for y in range(0,yf.ny):
             if msk_range[2*y] == 1:
-                nm = 0
+#                nm = 0
+                nm = 0+0j
                 n = 0
                 i = 0
                 while n < 3 and y+1+i < yf.ny:
@@ -130,125 +130,14 @@ def rm_noise_6data(yf,msk_range, xlim1, xlim2):
                 ave = nm / (n + m)
                 yf.data[x][y] = ave
     return()
-#                while i < 3 and y+1+i < yf.ny:
-#                    if msk_range[2*y+1+i] == 0:
-#                        nm += yf.data[x][y+1+i]
-#                        i += 1
-#                while n < 3 and y-1-n >= 0:
-#                    if msk_range[2*y-1-n] == 0:
-#                        nm += yf.data[x][y-1-n]
-#                        n += 1
-#                ave = nm / (i + n)
-#                yf.data[x][y] = ave
-##               while n < 3:
-##                   if msk_range[2*y+1+i] == 0:
-##                       nm += yf.data[x][y-3+n]+yf.data[x][y+1+i]
-##                       n += 1
-##                       i += 1
-##                   elif msk_range[2*y+1+i] != 0:
-##                       i += 1
-##               ave = nm/n/2.0
-##               yf.data[x][y] = ave
-#                yf.data[x][y-1] = ave
-#                yf.data[x][y+1] = ave
-#            if msk_range[2*y+1] == 1:
-#                nm = 0
-#                n = 0
-#                i = 0
-#                while n < 3:
-#                    if msk_range[2*y+2+i] == 0:
-#                        nm += yf.data[x][y-3+n]+yf.data[x][y+2+i]
-#                        n += 1
-#                        i += 1
-#                    elif msk_range[2*y+2+i] != 0:
-#                        i += 1
-#                ave = nm/n/2.0
-#                yf.data[x][y] = ave
-#                yf.data[x][y+1] = ave
-#                yf.data[x][y-1] = ave
-#                yf.data[x][y+2] = ave
-    return()
-
-####ノイズを除去_左(6data)
-###def rm_noise_left_6data(yf,msk_range):
-###    for x in range(0,64):
-###        for y in range(0,yf.ny):
-###            if msk_range[2*y] == 0.1:
-###                nm = 0
-###                n = 0
-###                i = 0
-###                while n < 3:
-###                    if msk_range[2*y+1+i] == 0:
-###                        nm += yf.data[x][y-3+n]+yf.data[x][y+1+i]
-###                        n += 1
-###                        i += 1
-###                    elif msk_range[2*y+1+i] != 0:
-###                        i += 1
-###                ave = nm/n/2
-###                yf.data[x][y] = ave
-###                yf.data[x][y-1] = ave
-###                yf.data[x][y+1] = ave
-###            if msk_range[2*y+1] == 0.1:
-###                nm = 0
-###                n = 0
-###                i = 0
-###                while n < 3:
-###                    if msk_range[2*y+2+i] == 0:
-###                        nm += yf.data[x][y-3+n]+yf.data[x][y+2+i]
-###                        n += 1
-###                        i += 1
-###                    elif msk_range[2*y+2+i] != 0:
-###                        i += 1
-###                ave = nm/n/2
-###                yf.data[x][y] = ave
-###                yf.data[x][y+1] = ave
-###                yf.data[x][y-1] = ave
-###                yf.data[x][y+2] = ave
-###    return()
-###
-####ノイズを除去_右(6data)
-###def rm_noise_right_6data(yf,msk_range):
-###    for x in range(64,yf.nx):
-###        for y in range(0,yf.ny):
-###            if msk_range[2*y] == 0.1:
-###                nm = 0
-###                n = 0
-###                i = 0
-###                while n < 3:
-###                    if msk_range[2*y+1+i] == 0:
-###                        nm += yf.data[x][y-3+n]+yf.data[x][y+1+i]
-###                        n += 1
-###                        i += 1
-###                    elif msk_range[2*y+1+i] != 0:
-###                        i += 1
-###                ave = nm/n/2
-###                yf.data[x][y] = ave
-###                yf.data[x][y-1] = ave
-###                yf.data[x][y+1] = ave
-###            if msk_range[2*y+1] == 0.1:
-###                nm = 0
-###                n = 0
-###                i = 0
-###                while n < 3:
-###                    if msk_range[2*y+2+i] == 0:
-###                        nm += yf.data[x][y-3+n]+yf.data[x][y+2+i]
-###                        n += 1
-###                        i += 1
-###                    elif msk_range[2*y+2+i] != 0:
-###                        i += 1
-###                ave = nm/n/2
-###                yf.data[x][y] = ave
-###                yf.data[x][y+1] = ave
-###                yf.data[x][y-1] = ave
-###                yf.data[x][y+2] = ave
-###    return()
 
 #パワースペクトルにマスクをかけてスムージング
-def rm_noise_PS(gx,yf,rolling_yf,msk_range,snumber):
-#def rm_noise_PS(yf,msk_range):
+#def rm_noise_PS(gx,yf,rolling_yf,msk_range,snumber):
+def rm_noise_PS(yf,msk_range):
     for y in range(0,304):
         if msk_range[y] == 1:
-            nm = 0
+#            nm = 0
+            nm = 0+0j
             n = 0
             i = 0
             while n < 3:
@@ -264,23 +153,6 @@ def rm_noise_PS(gx,yf,rolling_yf,msk_range,snumber):
 
     for y in range(0,303):
         yf[607-y] = yf[y]
-    
-#    plt.figure(figsize=(8,5))
-#    plt.xlim(-0.01,0.5)
-#    plt.ylim(-0.01,0.1)
-#    plt.plot(gx, np.abs(yf), label='power spectrum')
-#    plt.plot(gx,rolling_yf,label='moving average', alpha=0.7) 
-#    plt.title('power spectrum and moving average')
-#    plt.title('mask range')
-#    plt.xlabel('frequency')
-#    plt.ylabel('power')
-#    plt.plot(gx,msk_range, alpha=0.7)
-#    #plt.legend()
-#    rnp_filename = os.path.join('rnp/' + filename + snumber + '.png')
-#    plt.savefig(rnp_filename, format='png', dpi=300, bbox_inches='tight', pad_inches=0.1)
-#    #plt.show()
-#    plt.close()
-
     return(yf)
 
 # Ycut構造体の全pixelデータについて、1次元FFTをする
@@ -304,16 +176,17 @@ def yf_ifft(yf, x1,x2):
     return(ycut)
 
 # ycut.data[x][y-offy]→ data[y][x]->save fits
-def data_rflip_xy_save(ycut, data, offy, filename):
+def data_rflip_xy_save(ycut, data, header, offy, filename):
     for x in range(0, ycut.nx):
         for y in range (0, ycut.ny):
             data[y+offy][x] = ycut.data[x][y].real
             
     path = os.getcwd()
-    os.chdir('%s/output'%path)
+#    os.chdir('%s/output'%path)
     hdu = fits.PrimaryHDU(data, header)
     hdulist = fits.HDUList([hdu])
-    hdulist.writeto('%s.fits' %filename)
+#    hdulist.writeto('%s.fits' %filename)
+    hdulist.writeto('%s/output/%s.fits' %(path, filename))
     return(data)
 
 # ycut.data[x][y-offy]→ data[y][x]
@@ -323,6 +196,7 @@ def data_rflip_xy(ycut, data, offy):
             data[y+offy][x] = ycut.data[x][y].real
     return(data)
 
+'''
 # datax2を同じカラースケールで並べて表示する
 def fitsdsp_comp(data1,data2, vmin,vmax):
     ave,std = imstat(data1, 10,60, 100,250)
@@ -371,10 +245,10 @@ def fitsdsp_diff(data1,data2, vmin,vmax):
     plt.colorbar(aspect=40, pad=0.08, orientation='vertical')
     plt.show()
     return()
-
+'''
 
 # 自己相関関数をFFT
-def test_fft_compare(ss, ext):
+def test_fft_compare(ss, filename, ext):
     # 両側FFT
     d1 = np.zeros(304*2)
     for y in range(0,304):
@@ -382,38 +256,28 @@ def test_fft_compare(ss, ext):
         d1[304+y] = ss[y]
     yf1 = np.fft.fft(d1)/(304*2/2)
     gx1 = np.linspace(0,1,304*2)
-
-    # グラフ表示
-    #plt.figure(figsize=(8,5))
-    #plt.subplot(211)
-    #plt.title('autocorrelation function and power spectrum')
-    #plt.title('autocorrelation function')
-    #plt.xlabel('$\u03c4$')
-    #plt.ylabel('R($\u03c4$)')
-    #plt.ylim(-1,1)
-    #plt.plot(gx1*2-1,d1)
-    #plt.show()
     
-    plt.figure(figsize=(8,5))
-    plt.subplot(212)
-    plt.ylim(-0.01,0.1)
-    plt.xlim(-0.01,0.5)
-    plt.title('power spectrum')
-    plt.xlabel('frequency')
-    plt.ylabel('power')
-    plt.plot(gx1, np.abs(yf1), color = 'C0' if ext == '_L' or ext == '_R' else 'C1')
-    
-    plot_filename = os.path.join('plot/' + filename + ext + '.png')
-#    plot_filename = os.path.join('/Users/yamamura/Desktop/to_weka/IRCMap_doublestar/Qnoise/u_20230818/test/plot/' + filename + ext + '.png')
-#    print(plot_filename)
-    plt.savefig(plot_filename, format='png', dpi=300, bbox_inches='tight', pad_inches=0.1)
-#    plt.show()
-    plt.close()
+#    plt.figure(figsize=(8,3))
+##    plt.subplot(212)
+#    plt.ylim(-0.01,0.1)
+#    plt.xlim(-0.01,0.5)
+#    plt.title('power spectrum')
+#    plt.xlabel('frequency')
+#    plt.ylabel('power')
+#    plt.plot(gx1, np.abs(yf1), color = 'C0' if ext == '_L' or ext == '_R' else 'C3')
+#    
+#    plot_filename = os.path.join('plot/' + filename + ext + '.png')
+##    plot_filename = os.path.join('/Users/yamamura/Desktop/to_weka/IRCMap_doublestar/Qnoise/u_20230818/test/plot/' + filename + ext + '.png')
+##    print(plot_filename)
+#    plt.savefig(plot_filename, format='png', dpi=300, bbox_inches='tight', pad_inches=0.1)
+##    plt.show()
+#    plt.close()
     
     return(yf1,gx1)
 
 #moving averageと実際の関数の差からマスク位置を決定
-def delta_m_ave_self_fft(gx,yf,side,snumber):
+#def delta_m_ave_self_fft(gx,yf,side,snumber):
+def delta_m_ave_self_fft(gx,yf,side):
     rolling_yf = bn.move_mean(np.abs(yf),window=25)
     nan_roll = 0
     for nan_roll in range(0,500):#(0,292)~(0,583)
@@ -436,27 +300,12 @@ def delta_m_ave_self_fft(gx,yf,side,snumber):
     for y in range(0,608):
         if fity_selfFFT[y] >= 3*std:
             msk_range[y] = 1
-    
-    plt.figure(figsize=(8,5))
-    plt.xlim(-0.01,0.5)
-    plt.ylim(-0.01,0.1)
-    plt.plot(gx, np.abs(yf), label='power spectrum')
-    plt.plot(gx, rolling_yf, label='moving average', alpha=0.7) 
-    plt.title('power spectrum and moving average')
-    plt.title('mask range')
-    plt.xlabel('frequency')
-    plt.ylabel('power')
-    plt.plot(gx,msk_range, alpha=0.5)
-    #plt.legend()
-    mask_filename = os.path.join('mask/' + filename + snumber + '.png')
-    plt.savefig(mask_filename, format='png', dpi=300, bbox_inches='tight', pad_inches=0.1)
-    #plt.show()
-    plt.close()
+ 
 
     return(msk_range,std,rolling_yf)
 
 #パワースペクトルと移動平均からマスクの範囲を決定
-def delta_PS_move_ave(gx,yf,rolling_yf,base_std, ext):
+def delta_PS_move_ave(gx,yf,rolling_yf,base_std, filename, ext):
     delta_rangel = 0.09
     fity_selfFFT_std = np.zeros(304-math.floor(304*delta_rangel*2))
     fity_selfFFT = np.zeros(608)
@@ -476,22 +325,22 @@ def delta_PS_move_ave(gx,yf,rolling_yf,base_std, ext):
 
 
 
-    plt.figure(figsize=(8,5))
-    plt.xlim(-0.01,0.5)
-    plt.ylim(-0.01,0.1)
-    plt.plot(gx, np.abs(yf), label='power spectrum')
-    plt.plot(gx,rolling_yf,label='moving average', alpha=0.7) 
-    plt.title('power spectrum and moving average')
-    plt.title('mask range')
-    plt.xlabel('frequency')
-    plt.ylabel('power')
-    plt.plot(gx,msk_range, alpha=0.5)
-    #plt.legend()
-
-    noise_filename = os.path.join('noise/' + filename + ext + '.png')
-    plt.savefig(noise_filename, format='png', dpi=300, bbox_inches='tight', pad_inches=0.1)
-    #plt.show()
-    plt.close()
+#    plt.figure(figsize=(8,3))
+#    plt.xlim(-0.01,0.5)
+#    plt.ylim(-0.01,0.1)
+#    plt.plot(gx, np.abs(yf), label='power spectrum')
+#    plt.plot(gx,rolling_yf,label='moving average', alpha=0.7) 
+#    plt.title('power spectrum and moving average')
+#    plt.title('mask range')
+#    plt.xlabel('frequency')
+#    plt.ylabel('power')
+#    plt.plot(gx,msk_range, alpha=0.5)
+#    #plt.legend()
+#
+#    mask_filename = os.path.join('mask/' + filename + ext + '.png')
+#    plt.savefig(mask_filename, format='png', dpi=300, bbox_inches='tight', pad_inches=0.1)
+#    #plt.show()
+#    plt.close()
             
     return(msk_range)
 
@@ -544,210 +393,221 @@ def yf_plot(yf, x1,x2, mode, ext):
     return()
 
 
-
-
 ####  main() ####
 
-args = sys.argv
-fitsname = args[1]
-filename = fitsname.rstrip('.fits')
-filename_RS = fitsname.replace('_RS.fits','')
-
-x1,x2 = (40,40) # サンプルとして表示する x(pixel) の範囲
-offy  = 2       # スキップする y(sampling) の範囲
-
-(data,header) = data_from_fits(fitsname) # FITSを読み込む
-data0 = copy.deepcopy(data)
-
-# FITSデータを加工する
-# (data[y][x]→data[x][y]変換, 開始からoffy回分のsamplingを除く)
-ycut = data_flip_xy(data, offy)
-
-#天体の情報を抜く（改良版）
-ycut,yescape = escape_star(ycut,data, 0,63, 0,304)       # pixel 値 400 以上
-
-
-# FITSデータ(2次元配列)を1次元配列にする
-ldata = np.zeros(58*ycut.ny)
-for x in range(6, 64):
-    for y in range(0, ycut.ny):
-        ldata[(x-6)*ycut.ny+y] = ycut.data[x][y].real
-        
-rdata = np.zeros(58*ycut.ny)
-for x in range(69, ycut.nx):
-    for y in range(0, ycut.ny):
-        rdata[(x-69)*ycut.ny+y] = ycut.data[x][y].real
-
-#列の合間にダミーデータを入れる
-lave = statistics.mean(ldata)
-dummyl = 0
-ldata2 = [lave]*58*ycut.ny*2
-for x in range(6, 64):
-    for y in range(0, ycut.ny):
-        ldata2[(x-6)*ycut.ny+dummyl*ycut.ny+y] = ycut.data[x][y].real
-    dummyl += 1
-
-rave = statistics.mean(rdata)
-dummyr = 0
-rdata2 = [rave]*58*ycut.ny*2
-for x in range(69, ycut.nx):
-    for y in range(0, ycut.ny):
-        rdata2[(x-69)*ycut.ny+dummyr*ycut.ny+y] = ycut.data[x][y].real
-    dummyr += 1
-
-lag_max = 304
-
-# 自己相関関数の計算 (既存のルーチン)
-llist = pd.Series(ldata2)
-llist.index = pd.Series(np.ndarray(58*ycut.ny*2))
-lss = sm.tsa.stattools.acf(llist, nlags=lag_max)
-
-# (テスト) FFT2種類の方法の比較
-#test_fft_compare(ss)
-yfl1,gxl1 = test_fft_compare(lss, "_L")
-N_yfl = len(yfl1)
-yfl = np.zeros(N_yfl)
-for y in range(0,608):
-    yfl[y] = np.abs(yfl1[y])
-
-#moving averageと実際の関数の差からマスク位置を決定
-msk_rangel1,stdl1,rolling_yfl1 = delta_m_ave_self_fft(gxl1,yfl1,'left','_l1')
-
-#パワースペクトルにマスクをかけてスムージング
-yfl2 = rm_noise_PS(gxl1,yfl1,rolling_yfl1,msk_rangel1,'_l1')
-
-#パワースペクトルにマスクをかけてスムージング
-msk_rangel2,stdl2,rolling_yfl2 = delta_m_ave_self_fft(gxl1,yfl2,'left','_l2')
-yfl3 = rm_noise_PS(gxl1,yfl2,rolling_yfl2,msk_rangel2,'_l2')
-
-#moving averageと実際の関数の差からマスク位置を決定
-msk_rangel3,stdl3,rolling_yfl3 = delta_m_ave_self_fft(gxl1,yfl3,'left','_l3')
-
-#２行目の自己相関関数
-rlist = pd.Series(rdata2)
-rlist.index = pd.Series(np.ndarray(58*ycut.ny*2))
-rss = sm.tsa.stattools.acf(rlist, nlags=lag_max)
-
-yfr1,gxr1 = test_fft_compare(rss, "_R")
-N_yfr = len(yfr1)
-yfr = np.zeros(N_yfr)
-for y in range(0,608):
-    yfr[y] = np.abs(yfr1[y])
-
-
-
-#moving averageと実際の関数の差からマスク位置を決定
-msk_ranger1,stdr1,rolling_yfr1 = delta_m_ave_self_fft(gxr1,yfr1,'right','_r1')
-
-#パワースペクトルにマスクをかけてスムージング
-yfr2 = rm_noise_PS(gxr1,yfr1,rolling_yfr1,msk_ranger1,'_r1')
-
-#パワースペクトルにマスクをかけてスムージング
-msk_ranger2,stdr2,rolling_yfr2 = delta_m_ave_self_fft(gxr1,yfr2,'right','_r2')
-yfr3 = rm_noise_PS(gxr1,yfr2,rolling_yfr2,msk_ranger2,'_r2')
-
-#moving averageと実際の関数の差からマスク位置を決定
-msk_ranger3,stdr3,rolling_yfr3 = delta_m_ave_self_fft(gxr1,yfr3,'right','_r3')
-
-#moving averageと実際の関数の差からマスク位置を決定(正確)
-mask_rangel = delta_PS_move_ave(gxl1,yfl,rolling_yfl3,stdl3,'_L')
-mask_ranger = delta_PS_move_ave(gxr1,yfr,rolling_yfr3,stdr3,'_R')
-
-#天体の情報を抜く（オリジナル）
-#ycut,yescape = escape_star(ycut,data, 0,63, 0,304)       # pixel 値 400 以上
-
-#FFTをかける
-yf = ycut_fft(ycut, 1,ycut.nx)
-
-yf_plot(yf, x1,x2, "abs", "_b")
-
-#自動で決定した範囲のノイズを除去
-#rm_noise_left_6data(yf,mask_rangel)
-#rm_noise_right_6data(yf,mask_ranger)
-rm_noise_6data(yf,mask_rangel,0,64)
-rm_noise_6data(yf,mask_ranger,64,yf.nx)
-
-yf_plot(yf, x1,x2, "abs", "_a")     # x1,x2で指定した範囲を1列ずつFFTして表示
-
-# invers FFTをかける
-ycut = yf_ifft(yf, 1,yf.nx)
-
-
-#天体の情報を元に戻す（オリジナル）
-#ycut = return_star(ycut,yescape)
-
-
-
-# 処理後のデータのFFTプロット
-# FITSデータ(2次元配列)を1次元配列にする
-ldata = np.zeros(58*ycut.ny)
-for x in range(6, 64):
-    for y in range(0, ycut.ny):
-        ldata[(x-6)*ycut.ny+y] = ycut.data[x][y].real
-        
-rdata = np.zeros(58*ycut.ny)
-for x in range(69, ycut.nx):
-    for y in range(0, ycut.ny):
-        rdata[(x-69)*ycut.ny+y] = ycut.data[x][y].real
-
-#列の合間にダミーデータを入れる
-lave = statistics.mean(ldata)
-dummyl = 0
-ldata2 = [lave]*58*ycut.ny*2
-for x in range(6, 64):
-    for y in range(0, ycut.ny):
-        ldata2[(x-6)*ycut.ny+dummyl*ycut.ny+y] = ycut.data[x][y].real
-    dummyl += 1
-
-rave = statistics.mean(rdata)
-dummyr = 0
-rdata2 = [rave]*58*ycut.ny*2
-for x in range(69, ycut.nx):
-    for y in range(0, ycut.ny):
-        rdata2[(x-69)*ycut.ny+dummyr*ycut.ny+y] = ycut.data[x][y].real
-    dummyr += 1
-
-lag_max = 304
-
-llist = pd.Series(ldata2)
-llist.index = pd.Series(np.ndarray(58*ycut.ny*2))
-lss = sm.tsa.stattools.acf(llist, nlags=lag_max)
-yfl1,gxl1 = test_fft_compare(lss, "_LA")
-
-rlist = pd.Series(rdata2)
-rlist.index = pd.Series(np.ndarray(58*ycut.ny*2))
-rss = sm.tsa.stattools.acf(rlist, nlags=lag_max)
-yfr1,gxr1 = test_fft_compare(rss, "_RA")
-
-
-#天体の情報を元に戻す（改良版）
-ycut = return_star(ycut,yescape)
-
-# データをXY-flipしてFITSに戻す
-data_rflip_xy_save(ycut, data, offy, filename)
-#data_rflip_xy(ycut, data, offy)
+def rmnoise(filename):
     
+    time1 = time.time()
+#    elapsed_time = time1 - time0
+#    print(f"初期化時間：{elapsed_time}")
 
-# FITSを表示
-#fitsdsp_comp(data0, data, -10,250)
-#fitsdsp_diff(data0, data, -10,10)
+#    args = sys.argv
+#    fitsname = args[1]
 
-#天体の位置
-#000(x1,x2)(y1,y2)
-#725(6,40)(70,103)
-#142(10,63)(0,25)
-#401(30,63)(30,65)
-#231(40,63)(155,185)
-#727(15,63)(275,304)
-#698(6,50)(60,90)
-#402(6,30)(90,120)
-#092()()
-#326()()
-#302(6,40)(130,165)
-#152(6,55)(260,295)
-#274(20,63)(200,230)
-#406(40,63)(130,160)
+    #fitsname = args[2]
+    #filename = fitsname.rstrip('.fits')
+    #fitsname_RS = fitsname.replace('_RS.fits','')
+    fitsname = filename + '.fits' # fitsname = '{}{}'.format(filename, '.fits')
+    fitsname_RS = filename + '_RS.fits'
+    
+    x1,x2 = (40,40) # サンプルとして表示する x(pixel) の範囲
+    offy  = 2       # スキップする y(sampling) の範囲
+    
+    (data,header) = data_from_fits(fitsname) # FITSを読み込む
+    data0 = copy.deepcopy(data)
+    
+    # FITSデータを加工する
+    # (data[y][x]→data[x][y]変換, 開始からoffy回分のsamplingを除く)
+    ycut = data_flip_xy(data, offy)
+    
+    #天体の情報を抜く（改良版）
+    # More than 3 times the median of the histogram of surface brightness is excluded from the mask level as a bright signal. # median multiplied by 3 or more
+    ycut, yescape = escape_star(ycut,data, 0,63, 0,304)
+    
+    
+    # FITSデータ(2次元配列)を1次元配列にする
+    ldata = np.zeros(58*ycut.ny)
+    for x in range(6, 64):
+        for y in range(0, ycut.ny):
+            ldata[(x-6)*ycut.ny+y] = ycut.data[x][y].real
+            
+    rdata = np.zeros(58*ycut.ny)
+    for x in range(69, ycut.nx):
+        for y in range(0, ycut.ny):
+            rdata[(x-69)*ycut.ny+y] = ycut.data[x][y].real
+    
+    #列の合間にダミーデータを入れる
+    lave = statistics.mean(ldata)
+    dummyl = 0
+    ldata2 = [lave]*58*ycut.ny*2
+    for x in range(6, 64):
+        for y in range(0, ycut.ny):
+            ldata2[(x-6)*ycut.ny+dummyl*ycut.ny+y] = ycut.data[x][y].real
+        dummyl += 1
+    
+    rave = statistics.mean(rdata)
+    dummyr = 0
+    rdata2 = [rave]*58*ycut.ny*2
+    for x in range(69, ycut.nx):
+        for y in range(0, ycut.ny):
+            rdata2[(x-69)*ycut.ny+dummyr*ycut.ny+y] = ycut.data[x][y].real
+        dummyr += 1
+    
+    lag_max = 304
+    
+    # 自己相関関数の計算 (既存のルーチン)
+    llist = pd.Series(ldata2)
+    llist.index = pd.Series(np.ndarray(58*ycut.ny*2))
+    lss = sm.tsa.stattools.acf(llist, nlags=lag_max, missing='conservative')
+    
+    # (テスト) FFT2種類の方法の比較
+    #test_fft_compare(ss)
+    yfl1,gxl1 = test_fft_compare(lss, filename, "_L")
+    N_yfl = len(yfl1)
+    yfl = np.zeros(N_yfl)
+    for y in range(0,608):
+        yfl[y] = np.abs(yfl1[y])
+    
+    #moving averageと実際の関数の差からマスク位置を決定
+    #msk_rangel1,stdl1,rolling_yfl1 = delta_m_ave_self_fft(gxl1,yfl1,'left','_l1')
+    msk_rangel1,stdl1,rolling_yfl1 = delta_m_ave_self_fft(gxl1,yfl1,'left')
+    
+    #パワースペクトルにマスクをかけてスムージング
+    #yfl2 = rm_noise_PS(gxl1,yfl1,rolling_yfl1,msk_rangel1,'_l1')
+    yfl2 = rm_noise_PS(yfl1,msk_rangel1)
+    
+    #パワースペクトルにマスクをかけてスムージング
+    #msk_rangel2,stdl2,rolling_yfl2 = delta_m_ave_self_fft(gxl1,yfl2,'left','_l2')
+    msk_rangel2,stdl2,rolling_yfl2 = delta_m_ave_self_fft(gxl1,yfl2,'left')
+    #yfl3 = rm_noise_PS(gxl1,yfl2,rolling_yfl2,msk_rangel2,'_l2')
+    yfl3 = rm_noise_PS(yfl2,msk_rangel2)
+    
+    #moving averageと実際の関数の差からマスク位置を決定
+    #msk_rangel3,stdl3,rolling_yfl3 = delta_m_ave_self_fft(gxl1,yfl3,'left','_l3')
+    msk_rangel3,stdl3,rolling_yfl3 = delta_m_ave_self_fft(gxl1,yfl3,'left')
+    
+    #２行目の自己相関関数
+    rlist = pd.Series(rdata2)
+    rlist.index = pd.Series(np.ndarray(58*ycut.ny*2))
+    rss = sm.tsa.stattools.acf(rlist, nlags=lag_max, missing='conservative')
+    
+    yfr1,gxr1 = test_fft_compare(rss, filename, "_R")
+    N_yfr = len(yfr1)
+    yfr = np.zeros(N_yfr)
+    for y in range(0,608):
+        yfr[y] = np.abs(yfr1[y])
+    
+    
+    
+    #moving averageと実際の関数の差からマスク位置を決定
+    #msk_ranger1,stdr1,rolling_yfr1 = delta_m_ave_self_fft(gxr1,yfr1,'right','_r1')
+    msk_ranger1,stdr1,rolling_yfr1 = delta_m_ave_self_fft(gxr1,yfr1,'right')
+    
+    #パワースペクトルにマスクをかけてスムージング
+    #yfr2 = rm_noise_PS(gxr1,yfr1,rolling_yfr1,msk_ranger1,'_r1')
+    yfr2 = rm_noise_PS(yfr1,msk_ranger1)
+    
+    #パワースペクトルにマスクをかけてスムージング
+    #msk_ranger2,stdr2,rolling_yfr2 = delta_m_ave_self_fft(gxr1,yfr2,'right','_r2')
+    msk_ranger2,stdr2,rolling_yfr2 = delta_m_ave_self_fft(gxr1,yfr2,'right')
+    #yfr3 = rm_noise_PS(gxr1,yfr2,rolling_yfr2,msk_ranger2,'_r2')
+    yfr3 = rm_noise_PS(yfr2,msk_ranger2)
+    
+    #moving averageと実際の関数の差からマスク位置を決定
+    #msk_ranger3,stdr3,rolling_yfr3 = delta_m_ave_self_fft(gxr1,yfr3,'right','_r3')
+    msk_ranger3,stdr3,rolling_yfr3 = delta_m_ave_self_fft(gxr1,yfr3,'right')
+    
+    #moving averageと実際の関数の差からマスク位置を決定(正確)
+    mask_rangel = delta_PS_move_ave(gxl1,yfl,rolling_yfl3,stdl3,filename,'_L')
+    mask_ranger = delta_PS_move_ave(gxr1,yfr,rolling_yfr3,stdr3,filename,'_R')
+    
+    
+    #FFTをかける
+    yf = ycut_fft(ycut, 1,ycut.nx)
+    
+    yf_plot(yf, x1,x2, "abs", "_b")
+    
+    #自動で決定した範囲のノイズを除去
+    #rm_noise_left_6data(yf,mask_rangel)
+    #rm_noise_right_6data(yf,mask_ranger)
+    rm_noise_6data(yf,mask_rangel,0,64)
+    rm_noise_6data(yf,mask_ranger,64,yf.nx)
+    
+    yf_plot(yf, x1,x2, "abs", "_a")     # x1,x2で指定した範囲を1列ずつFFTして表示
+    
+    # invers FFTをかける
+    ycut = yf_ifft(yf, 1,yf.nx)
+    
+    
+    #天体の情報を元に戻す（オリジナル）
+    ycut = return_star(ycut,yescape)
+    
+    
+    # 処理後のデータのFFTプロット
+    # FITSデータ(2次元配列)を1次元配列にする
+    ldata = np.zeros(58*ycut.ny)
+    for x in range(6, 64):
+        for y in range(0, ycut.ny):
+            ldata[(x-6)*ycut.ny+y] = ycut.data[x][y].real
+            
+    rdata = np.zeros(58*ycut.ny)
+    for x in range(69, ycut.nx):
+        for y in range(0, ycut.ny):
+            rdata[(x-69)*ycut.ny+y] = ycut.data[x][y].real
+    
+    #列の合間にダミーデータを入れる
+    lave = statistics.mean(ldata)
+    dummyl = 0
+    ldata2 = [lave]*58*ycut.ny*2
+    for x in range(6, 64):
+        for y in range(0, ycut.ny):
+            ldata2[(x-6)*ycut.ny+dummyl*ycut.ny+y] = ycut.data[x][y].real
+        dummyl += 1
+    
+    rave = statistics.mean(rdata)
+    dummyr = 0
+    rdata2 = [rave]*58*ycut.ny*2
+    for x in range(69, ycut.nx):
+        for y in range(0, ycut.ny):
+            rdata2[(x-69)*ycut.ny+dummyr*ycut.ny+y] = ycut.data[x][y].real
+        dummyr += 1
+    
+    lag_max = 304
+    
+    llist = pd.Series(ldata2)
+    llist.index = pd.Series(np.ndarray(58*ycut.ny*2))
+    lss = sm.tsa.stattools.acf(llist, nlags=lag_max, missing='conservative')
+    yfl1,gxl1 = test_fft_compare(lss, filename, "_LA")
+    
+    rlist = pd.Series(rdata2)
+    rlist.index = pd.Series(np.ndarray(58*ycut.ny*2))
+    rss = sm.tsa.stattools.acf(rlist, nlags=lag_max, missing='conservative')
+    yfr1,gxr1 = test_fft_compare(rss, filename, "_RA")
+    
+    #天体の情報を元に戻す（2024/04/26）
+    #ycut = return_star(ycut,yescape)
+    
+    # データをXY-flipしてFITSに戻す
+    data_rflip_xy_save(ycut, data, header, offy, filename)
+    #data_rflip_xy(ycut, data, offy)
+        
+    
+    # FITSを表示
+    #fitsdsp_comp(data0, data, -10,250)
+    #fitsdsp_diff(data0, data, -10,10)
+    
+    time2 = time.time()
+    elapsed_time = time2-time1
+    print(f"経過時間：{elapsed_time}")
+    
+    return()
 
-time2 = time.time()
-elapsed_time = time2-time1
-print(f"経過時間：{elapsed_time}")
+
+def rmnoise_list(fits_list_path):    
+    input_files = read_fits_list(fits_list_path)
+    for f in input_files:
+        rmnoise(f)
+
+fits_list_path = sys.argv[1]
+rmnoise_list(fits_list_path)
+
