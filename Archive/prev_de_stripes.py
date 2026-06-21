@@ -4,11 +4,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 from astropy.io import fits
 from astropy.stats import sigma_clip
-import logging
-import time
+# import logging
+# import time
 
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+# logger = logging.getLogger(__name__)
+# logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 
 # FITS I/O Utilities
@@ -134,7 +134,7 @@ def de_stripes(file, pattern_image, outdir='./destripes'):
     """Apply stripe correction to a single FITS file."""
     """Remove stripes and save corrected FITS images."""
     
-    start_time = time.process_time()
+    # start_time = time.process_time()
 
     data, header = read_fits(file)
     # Ensure consistent dtype (avoid repeated casting later)
@@ -149,7 +149,7 @@ def de_stripes(file, pattern_image, outdir='./destripes'):
     filename = os.path.basename(file).replace(".fits", "")
     write_fits(filename, corrected_data, header, outdir)
 
-    logger.info("経過時間 1枚： %s", time.process_time() - start_time)
+    # logger.info("経過時間 1枚： %s", time.process_time() - start_time)
     return
 
 
@@ -157,7 +157,7 @@ def de_stripes_outer(fits_files, season, band, sigma=3, maxiters=5):
     """Compute the pattern image for all FITS files."""
     # Load all FITS images into a 3D stack (n_images, height, width)
 
-    start_time = time.process_time()
+    # start_time = time.process_time()
 
     data_stack = load_fits_stack(fits_files)
 
@@ -199,7 +199,7 @@ def de_stripes_outer(fits_files, season, band, sigma=3, maxiters=5):
     # pattern_image = np.broadcast_to(profile_diff, (mean_image.shape[0], profile_diff.size)).copy()
     # save_fits(pattern_image, 'pattern_image')  # for debugging
     
-    logger.info("経過時間 補正用画像： %s", time.process_time() - start_time)
+    # logger.info("経過時間 補正用画像： %s", time.process_time() - start_time)
 
     return pattern_image
 
