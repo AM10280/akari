@@ -67,7 +67,7 @@ def data_flip_xy(data, offy):
     return ycut
 
 
-
+'''
 
 def imhist(data, x1, x2, y1, y2, bins):
     """Draw a histogram of a certain area"""
@@ -88,7 +88,7 @@ def data_all(data):
     #plt.xlim(-200,600)
     plt.hist(alldata, bins=400, histtype='barstacked')
     plt.show()
-
+'''
 
 
 def escape_star(ycut, data, xlim1, xlim2, ylim1, ylim2):
@@ -137,8 +137,8 @@ def return_star(ycut, yescape):
     return ycut
 
 
-
-def to1darray(ycut):
+# def to1darray(ycut):
+def to1darray(ycut, filename):
     # FITSデータ(2次元配列)を1次元配列にする
     ldata = np.zeros(58*ycut.ny)
     for x in range(6, 64):
@@ -150,6 +150,37 @@ def to1darray(ycut):
         for y in range(0, ycut.ny):
             rdata[(x-69)*ycut.ny+y] = ycut.data[x][y].real
     
+
+    # Prepare the x-axis for the autocorrelation plot
+    gx1 = np.linspace(0, 1, 17632)
+
+    '''
+    # Plot the time series data (original)
+    plt.figure(figsize=(8, 3))
+    # plt.ylim(-0.01, 0.1)
+    # plt.xlim(-0.01, 0.5)
+    plt.title('Time Series Data')
+    plt.xlabel('Time')
+    plt.ylabel('Brightness')
+    plt.plot(gx1, np.abs(ldata), color='C0')
+    os.makedirs('./tdata', exist_ok=True)
+    plot_filename = os.path.join('tdata', f'{filename}_L1.png')
+    plt.savefig(plot_filename, format='png', dpi=300, bbox_inches='tight', pad_inches=0.1)
+    plt.close()
+
+    plt.figure(figsize=(8, 3))
+    # plt.ylim(-0.01, 0.1)
+    # plt.xlim(-0.01, 0.5)
+    plt.title('Time Series Data')
+    plt.xlabel('Time')
+    plt.ylabel('Brightness')
+    plt.plot(gx1, np.abs(rdata), color='C0')
+    os.makedirs('./tdata', exist_ok=True)
+    plot_filename = os.path.join('tdata', f'{filename}_R1.png')
+    plt.savefig(plot_filename, format='png', dpi=300, bbox_inches='tight', pad_inches=0.1)
+    plt.close()
+    '''
+
     #列の合間にダミーデータを入れる
     lave = statistics.mean(ldata)
     dummyl = 0
@@ -166,8 +197,36 @@ def to1darray(ycut):
         for y in range(0, ycut.ny):
             rdata2[(x-69)*ycut.ny+dummyr*ycut.ny+y] = ycut.data[x][y].real
         dummyr += 1
-    
-    lag_max = 304
+
+    # Prepare the x-axis for the autocorrelation plot
+    gx2 = np.linspace(0, 1, 35264)
+
+    '''
+    # Plot the time series data (original)
+    plt.figure(figsize=(8, 3))
+    # plt.ylim(-0.01, 0.1)
+    # plt.xlim(-0.01, 0.5)
+    plt.title('Time Series Data')
+    plt.xlabel('Time')
+    plt.ylabel('Brightness')
+    plt.plot(gx2, np.abs(ldata2), color='C0')
+    os.makedirs('./tdata', exist_ok=True)
+    plot_filename = os.path.join('tdata', f'{filename}_L2.png')
+    plt.savefig(plot_filename, format='png', dpi=300, bbox_inches='tight', pad_inches=0.1)
+    plt.close()
+
+    plt.figure(figsize=(8, 3))
+    # plt.ylim(-0.01, 0.1)
+    # plt.xlim(-0.01, 0.5)
+    plt.title('Time Series Data')
+    plt.xlabel('Time')
+    plt.ylabel('Brightness')
+    plt.plot(gx2, np.abs(rdata2), color='C0')
+    os.makedirs('./tdata', exist_ok=True)
+    plot_filename = os.path.join('tdata', f'{filename}_R2.png')
+    plt.savefig(plot_filename, format='png', dpi=300, bbox_inches='tight', pad_inches=0.1)
+    plt.close()
+    '''
 
     return ldata2, rdata2
 
@@ -255,6 +314,7 @@ def autocorr_fft(ss, filename, ext):
     # Prepare the x-axis for the autocorrelation plot
     gx1 = np.linspace(0, 1, 305)
 
+    '''
     # Create the plot for autocorrelation function
     plt.figure(figsize=(8, 3))
     # plt.subplot(211)
@@ -263,10 +323,12 @@ def autocorr_fft(ss, filename, ext):
     plt.ylabel('R($\u03c4$)')
     plt.ylim(-1, 1)
     plt.plot(gx1, ss, color='C0' if ext in ['_L', '_R'] else 'C3')
+    os.makedirs('./autocorr', exist_ok=True)
     plot_filename = os.path.join('autocorr', f'{filename}{ext}.png')
     plt.savefig(plot_filename, format='png', dpi=300, bbox_inches='tight', pad_inches=0.1)
     #plt.show()
     plt.close()
+    '''
 
 
     # generate d1 for two-sided FFT
@@ -288,6 +350,8 @@ def autocorr_fft(ss, filename, ext):
     plot_filename = os.path.join('plot', f'{filename}{ext}.png')
     # plot_filename = os.path.join('/Users/yamamura/Desktop/to_weka/IRCMap_doublestar/Qnoise/u_20230818/test/plot/' + filename + ext + '.png')
     # print(plot_filename)
+    os.makedirs('./ps', exist_ok=True)
+    plot_filename = os.path.join('ps', f'{filename}{ext}.png')
     plt.savefig(plot_filename, format='png', dpi=300, bbox_inches='tight', pad_inches=0.1)
     plt.close()
 
@@ -336,6 +400,7 @@ def delta_m_ave_self_fft(gx, yf, filename, side, snumber):
     msk_range = (fity_selfFFT >= 3 * std).astype(int)
     # msk_range[fity_selfFFT >= 3 * std] = 1
 
+    '''
     # Plotting the power spectrum, moving average, and mask range
     plt.figure(figsize=(8, 3))
     plt.xlim(-0.01, 0.5)
@@ -348,9 +413,11 @@ def delta_m_ave_self_fft(gx, yf, filename, side, snumber):
     plt.plot(gx, msk_range, alpha=0.5)
     #plt.legend()
     # Save the plot
+    os.makedirs('./premask', exist_ok=True)
     pmask_filename = os.path.join('premask', f'{filename}{snumber}.png')
     plt.savefig(pmask_filename, format='png', dpi=300, bbox_inches='tight', pad_inches=0.1)
     plt.close()
+    '''
 
     return msk_range, std, rolling_yf
 
@@ -376,6 +443,7 @@ def rm_noise_PS(gx, yf, rolling_yf, msk_range, filename, snumber):
     # yf[mid + 1:] = yf[:mid + 1][::-1]
     yf[mid:] = yf[:mid][::-1]
 
+    '''
     # Plotting
     plt.figure(figsize=(8, 3))
     plt.xlim(-0.01, 0.5)
@@ -393,6 +461,7 @@ def rm_noise_PS(gx, yf, rolling_yf, msk_range, filename, snumber):
     os.makedirs(os.path.dirname(rnp_filename), exist_ok=True)
     plt.savefig(rnp_filename, format='png', dpi=300, bbox_inches='tight', pad_inches=0.1)
     plt.close()
+    '''
 
     return yf
 
@@ -426,8 +495,8 @@ def delta_PS_move_ave(gx, yf, rolling_yf, base_std, filename, ext):
     msk_range[1:] |= msk_range[:-1]
 
 
-    save_diagram_data(yf, ext)
-
+    save_diagram_data(np.abs(yf), 'power_spectrum_y', ext)
+    save_diagram_data(msk_range, 'mask_range', ext)
 
     # Plot power spectrum, moving average, and mask range
     plt.figure(figsize=(8, 3))
@@ -441,6 +510,7 @@ def delta_PS_move_ave(gx, yf, rolling_yf, base_std, filename, ext):
     plt.ylabel('Power')
 
     mask_filename = os.path.join('mask', f"{filename}{ext}.png")
+    os.makedirs('./mask', exist_ok=True)
     plt.savefig(mask_filename, format='png', dpi=300, bbox_inches='tight', pad_inches=0.1)
     plt.close()
 
@@ -449,11 +519,37 @@ def delta_PS_move_ave(gx, yf, rolling_yf, base_std, filename, ext):
 
 
 
+# power spectrum and mask range diagram
+
+
+
+# fits_list_path
+def save_diagram_data(target, diagram_name, ext):
+# def save_diagram_data(self, yf, ext):
+    """Saves yf data to appropriate files based on 'ext' (Left or Right channel)"""
+    # abs_yf = np.abs(yf)  # Compute absolute values only once for efficiency
+
+    if ext == '_L':
+        # Save data in text and CSV formats for the left channel
+        with open(f'diagram_l_{diagram_name}.csv', 'a') as f_csv:
+            writer = csv.writer(f_csv)
+            writer.writerow(target.tolist())           # Write to CSV file
+        np.save(f'power_l_{diagram_name}.npy', target)  # Save binary data to .npy for faster access
+
+    elif ext == '_R':
+        # Save data in text and CSV formats for the right channel
+        with open(f'diagram_r_{diagram_name}.csv', 'a') as f_csv:
+            writer = csv.writer(f_csv)
+            writer.writerow(target.tolist())           # Write to CSV file    
+
+
+
+
 
 # pt diagram
 
 # fits_list_path
-def save_diagram_data(yf, ext):
+def save_diagram_data_ps(yf, ext):
 # def save_diagram_data(self, yf, ext):
     """Saves yf data to appropriate files based on 'ext' (Left or Right channel)"""
     abs_yf = np.abs(yf)  # Compute absolute values only once for efficiency
@@ -482,7 +578,7 @@ def save_npz(self, a, b):
 
 
 
-    '''
+    
 # pt diagram
 
 #    with open('diagram.txt', 'a') as f:
@@ -516,7 +612,7 @@ def save_npz(self, a, b):
 
 
 # np.savez('power.npz', a=a, b=b)
-    '''
+    
 
 
 
@@ -607,6 +703,7 @@ def data_rflip_xy_save(ycut, data, header, offy, filename):
     path = os.getcwd()
     hdu = fits.PrimaryHDU(data, header)
     hdulist = fits.HDUList([hdu])
+    os.makedirs('./output', exist_ok=True)
     hdulist.writeto(f'{path}/output/{filename}.fits', overwrite=True)
     return data
 
@@ -716,6 +813,7 @@ def yf_plot(yf, x1,x2, filename, mode, ext):
     plt.xlabel('frequency')
     plt.ylabel('power')
 
+    os.makedirs('./fft', exist_ok=True)
     fft_filename = os.path.join('fft/' + filename + ext + '.png')
     plt.savefig(fft_filename, format='png', dpi=300, bbox_inches='tight', pad_inches=0.1)
 #    plt.savefig('ypplot' + ext + '.png')
@@ -762,7 +860,7 @@ def rmnoise(filename):
     # convert FITS data (2-dimensional array) to 1-dimensional array
     # Extract rows 6 to 63 (ldata) and 69 to nx-1 (rdata) from the real part of ycut.data
     # Create ldata2 and rdata2 with alternating rows of lave/rave and actual data values
-    ldata2, rdata2 = to1darray(ycut)
+    ldata2, rdata2 = to1darray(ycut, filename)
 
     
     # 自己相関関数の計算 (既存のルーチン)
@@ -834,7 +932,7 @@ def rmnoise(filename):
     #FFTをかける
     yf = ycut_fft(ycut, 1,ycut.nx)
     
-    yf_plot(yf, x1,x2, filename, "abs", "_b")
+    # yf_plot(yf, x1,x2, filename, "abs", "_b")
     
     #自動で決定した範囲のノイズを除去
     #rm_noise_left_6data(yf,mask_rangel)
@@ -842,7 +940,7 @@ def rmnoise(filename):
     rm_noise_6data(yf,mask_rangel,0,64)
     rm_noise_6data(yf,mask_ranger,64,yf.nx)
     
-    yf_plot(yf, x1,x2, filename, "abs", "_a")     # x1,x2で指定した範囲を1列ずつFFTして表示
+    # yf_plot(yf, x1,x2, filename, "abs", "_a")     # x1,x2で指定した範囲を1列ずつFFTして表示
     
     # inverse FFTをかける
     ycut = yf_ifft(yf, 1,yf.nx)
